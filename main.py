@@ -21,17 +21,17 @@ from aiogram.client.default import DefaultBotProperties
 TOKEN = os.getenv("BOT_TOKEN", "8610997909:AAE43YuVZDWbK-3NsrcAXVdS_dac7FuHeRU")
 ADMIN_ID = 6292545074
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "itachi201028")
-CHANNELS = []  # Kod ichida kanal qo'shish mumkin, yoki admin panel orqali
+CHANNELS = []
  
 # ============================================================
  
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
  
-# -------- Admin tugmalari --------
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="🎬 Kino qo'shish"), KeyboardButton(text="📺 Serial qo'shish")],
+        [KeyboardButton(text="➕ Serialga qism qo'shish")],
         [KeyboardButton(text="📁 Barcha kinolar"), KeyboardButton(text="🗑 Kino o'chirish")],
         [KeyboardButton(text="📢 Kanal qo'shish"), KeyboardButton(text="📋 Kanallar ro'yxati")],
         [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📣 Xabar yuborish")],
@@ -40,9 +40,8 @@ admin_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
  
-# -------- Fayllar --------
-DATA_FILE = "data.json"        # Kinolar
-SERIES_FILE = "series.json"    # Seriallar
+DATA_FILE = "data.json"
+SERIES_FILE = "series.json"
 STATS_FILE = "stats.json"
 CHANNELS_FILE = "channels.json"
 data_lock = asyncio.Lock()
@@ -112,7 +111,7 @@ async def track_user(user_id: int):
     await save_stats(stats)
  
 # ============================================================
-# FSM HOLATLARI
+# FSM
 # ============================================================
 class AdminFSM(StatesGroup):
     waiting_for_password = State()
@@ -122,11 +121,15 @@ class AdminFSM(StatesGroup):
     waiting_for_title = State()
     waiting_for_code = State()
     waiting_for_delete = State()
-    # Serial
+    # Yangi serial
     waiting_for_series_title = State()
     waiting_for_series_code = State()
     waiting_for_series_count = State()
     waiting_for_episode = State()
+    # Mavjud serialga qism qo'shish
+    waiting_for_add_ep_code = State()
+    waiting_for_add_ep_count = State()
+    waiting_for_add_ep_file = State()
     # Kanal
     waiting_for_channel = State()
     # Xabar
@@ -179,6 +182,8 @@ async def start_cmd(message: Message, state: FSMContext):
             str(AdminFSM.waiting_for_code), str(AdminFSM.waiting_for_delete),
             str(AdminFSM.waiting_for_series_title), str(AdminFSM.waiting_for_series_code),
             str(AdminFSM.waiting_for_series_count), str(AdminFSM.waiting_for_episode),
+            str(AdminFSM.waiting_for_add_ep_code), str(AdminFSM.waiting_for_add_ep_count),
+            str(AdminFSM.waiting_for_add_ep_file),
             str(AdminFSM.waiting_for_channel), str(AdminFSM.waiting_for_broadcast),
         ]
         if cur not in admin_states:
@@ -246,7 +251,7 @@ async def admin_receive_video(message: Message, state: FSMContext):
     else:
         file_id, ftype = message.document.file_id, "document"
     await state.update_data(file_id=file_id, file_type=ftype)
-    await message.answer("✏️ <b>Kino nomini kiriting:</b>\nMasalan: <code>Avatar 2</code>")
+    await message.answer("✏️ <b>Kino nomini kiriting:</b>")
     await state.set_state(AdminFSM.waiting_for_title)
  
 @dp.message(AdminFSM.waiting_for_video)
@@ -260,9 +265,7 @@ async def admin_movie_title(message: Message, state: FSMContext):
         await message.answer("❌ Nom 100 belgidan kam bo'lsin.")
         return
     await state.update_data(title=title)
-    await message.answer(
-        "🔑 <b>Kino kodini kiriting:</b>\nMasalan: <code>avatar2</code> yoki <code>001</code>"
-    )
+    await message.answer("🔑 <b>Kino kodini kiriting:</b>\nMasalan: <code>avatar2</code>")
     await state.set_state(AdminFSM.waiting_for_code)
  
 @dp.message(AdminFSM.waiting_for_code, F.text)
@@ -280,7 +283,7 @@ async def admin_save_movie(message: Message, state: FSMContext):
     all_data[code] = {
         "file_id": data["file_id"],
         "type": data.get("file_type", "video"),
-        "title": data.get("title", "Nomsiz kino"),
+        "title": data.get("title", "Nomsiz"),
         "kind": "movie"
     }
     await save_data(all_data)
@@ -293,8 +296,7 @@ async def admin_save_movie(message: Message, state: FSMContext):
     await state.set_state(AdminFSM.idle)
  
 # ============================================================
-# ADMIN — SERIAL QO'SHISH
-# Jarayon: nom → kod → qismlar soni → har bir qism fayli
+# ADMIN — YANGI SERIAL QO'SHISH
 # ============================================================
 @dp.message(F.text == "📺 Serial qo'shish")
 async def admin_add_series(message: Message, state: FSMContext):
@@ -314,8 +316,8 @@ async def admin_series_title(message: Message, state: FSMContext):
         return
     await state.update_data(series_title=title, episodes=[])
     await message.answer(
-        f"✅ Serial nomi: <b>{title}</b>\n\n"
-        "🔑 <b>Serial kodini kiriting:</b>\nMasalan: <code>breaking</code> yoki <code>s001</code>"
+        f"✅ Nomi: <b>{title}</b>\n\n"
+        "🔑 <b>Serial kodini kiriting:</b>\nMasalan: <code>breaking</code>"
     )
     await state.set_state(AdminFSM.waiting_for_series_code)
  
@@ -328,12 +330,13 @@ async def admin_series_code(message: Message, state: FSMContext):
     all_data = await load_data()
     all_series = await load_series()
     if code in all_data or code in all_series:
-        await message.answer(f"⚠️ <b>'{code}'</b> kodi allaqachon mavjud! Boshqa kod kiriting.")
+        await message.answer(f"⚠️ <b>'{code}'</b> kodi mavjud! Boshqa kod kiriting.")
         return
     await state.update_data(series_code=code)
     await message.answer(
-        "🔢 <b>Nechta qism bo'ladi?</b>\n\n"
-        "Raqam kiriting (1-100):\nMasalan: <code>10</code>"
+        "🔢 <b>Nechta qism yuklaysiz hozir?</b>\n\n"
+        "Raqam kiriting (1-100):\n"
+        "💡 Keyin yana qo'shish mumkin!"
     )
     await state.set_state(AdminFSM.waiting_for_series_count)
  
@@ -342,17 +345,16 @@ async def admin_series_count(message: Message, state: FSMContext):
     try:
         count = int(message.text.strip())
         if count < 1 or count > 100:
-            raise ValueError
+            raise ValueError()
     except ValueError:
         await message.answer("❌ 1 dan 100 gacha raqam kiriting.")
         return
  
-    await state.update_data(total_episodes=count, current_episode=1, episodes=[])
+    await state.update_data(total_to_upload=count, current_episode=1, episodes=[])
     data = await state.get_data()
- 
     await message.answer(
-        f"📺 <b>{data['series_title']}</b> — {count} ta qism\n\n"
-        f"📤 <b>1-qismni yuboring</b> (video yoki fayl):"
+        f"📺 <b>{data['series_title']}</b>\n\n"
+        f"📤 <b>1-qismni yuboring:</b>"
     )
     await state.set_state(AdminFSM.waiting_for_episode)
  
@@ -366,42 +368,146 @@ async def admin_receive_episode(message: Message, state: FSMContext):
     data = await state.get_data()
     episodes = data.get("episodes", [])
     current = data.get("current_episode", 1)
-    total = data.get("total_episodes", 1)
+    total_to_upload = data.get("total_to_upload", 1)
  
     episodes.append({"file_id": file_id, "type": ftype})
     await state.update_data(episodes=episodes, current_episode=current + 1)
  
-    if current >= total:
-        # Barcha qismlar yuklandi — saqlash
+    if current >= total_to_upload:
+        # Saqlash
         all_series = await load_series()
         code = data["series_code"]
         all_series[code] = {
             "title": data["series_title"],
             "kind": "series",
-            "total": total,
             "episodes": episodes
         }
         await save_series(all_series)
- 
         await message.answer(
             f"✅ <b>Serial saqlandi!</b>\n\n"
             f"📺 Nomi: <b>{data['series_title']}</b>\n"
             f"🔑 Kodi: <code>{code}</code>\n"
-            f"🎞 Qismlar: <b>{total} ta</b>",
+            f"🎞 Qismlar: <b>{len(episodes)} ta</b>\n\n"
+            "💡 Keyinchalik <b>➕ Serialga qism qo'shish</b> orqali yangi qismlar qo'sha olasiz!",
             reply_markup=admin_keyboard
         )
         await state.set_state(AdminFSM.idle)
     else:
         await message.answer(
             f"✅ <b>{current}-qism saqlandi!</b>\n\n"
-            f"📤 <b>{current + 1}-qismni yuboring</b> ({current}/{total}):"
+            f"📤 <b>{current + 1}-qismni yuboring</b> ({current}/{total_to_upload}):"
         )
  
 @dp.message(AdminFSM.waiting_for_episode)
 async def admin_episode_wrong(message: Message, state: FSMContext):
     data = await state.get_data()
     current = data.get("current_episode", 1)
-    await message.answer(f"⚠️ Iltimos, {current}-qism uchun video yoki fayl yuboring!")
+    await message.answer(f"⚠️ {current}-qism uchun video yoki fayl yuboring!")
+ 
+# ============================================================
+# ADMIN — MAVJUD SERIALGA QISM QO'SHISH
+# ============================================================
+@dp.message(F.text == "➕ Serialga qism qo'shish")
+async def admin_add_ep_start(message: Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    series = await load_series()
+    if not series:
+        await message.answer("🚫 Hozircha hech qanday serial yo'q.")
+        return
+ 
+    text = "📺 <b>Qaysi serialga qism qo'shmoqchisiz?</b>\n\nKodini kiriting:\n\n"
+    for code, s in series.items():
+        ep_count = len(s.get("episodes", []))
+        text += f"• <code>{code}</code> — {s.get('title', 'Nomsiz')} ({ep_count} qism)\n"
+ 
+    await message.answer(text, reply_markup=ReplyKeyboardRemove())
+    await state.set_state(AdminFSM.waiting_for_add_ep_code)
+ 
+@dp.message(AdminFSM.waiting_for_add_ep_code, F.text)
+async def admin_add_ep_code(message: Message, state: FSMContext):
+    code = message.text.strip().lower()
+    series = await load_series()
+ 
+    if code not in series:
+        await message.answer(f"❌ <b>'{code}'</b> kodi topilmadi. Qaytadan kiriting:")
+        return
+ 
+    s = series[code]
+    current_count = len(s.get("episodes", []))
+    await state.update_data(add_ep_code=code, add_ep_current=current_count + 1)
+ 
+    await message.answer(
+        f"✅ Serial: <b>{s['title']}</b>\n"
+        f"🎞 Hozirgi qismlar: <b>{current_count} ta</b>\n\n"
+        "🔢 <b>Nechta yangi qism qo'shmoqchisiz?</b>\n"
+        "Raqam kiriting (1-100):"
+    )
+    await state.set_state(AdminFSM.waiting_for_add_ep_count)
+ 
+@dp.message(AdminFSM.waiting_for_add_ep_count, F.text)
+async def admin_add_ep_count(message: Message, state: FSMContext):
+    try:
+        count = int(message.text.strip())
+        if count < 1 or count > 100:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ 1 dan 100 gacha raqam kiriting.")
+        return
+ 
+    data = await state.get_data()
+    await state.update_data(add_ep_total=count, add_ep_uploaded=0, new_episodes=[])
+ 
+    await message.answer(
+        f"📤 <b>{data['add_ep_current']}-qismni yuboring:</b>"
+    )
+    await state.set_state(AdminFSM.waiting_for_add_ep_file)
+ 
+@dp.message(AdminFSM.waiting_for_add_ep_file, F.video | F.document)
+async def admin_add_ep_file(message: Message, state: FSMContext):
+    if message.video:
+        file_id, ftype = message.video.file_id, "video"
+    else:
+        file_id, ftype = message.document.file_id, "document"
+ 
+    data = await state.get_data()
+    new_episodes = data.get("new_episodes", [])
+    uploaded = data.get("add_ep_uploaded", 0) + 1
+    total = data.get("add_ep_total", 1)
+    current_num = data.get("add_ep_current", 1)
+ 
+    new_episodes.append({"file_id": file_id, "type": ftype})
+    await state.update_data(new_episodes=new_episodes, add_ep_uploaded=uploaded,
+                            add_ep_current=current_num + 1)
+ 
+    if uploaded >= total:
+        # Serialga qo'shish
+        code = data["add_ep_code"]
+        series = await load_series()
+        old_episodes = series[code].get("episodes", [])
+        series[code]["episodes"] = old_episodes + new_episodes
+        total_now = len(series[code]["episodes"])
+        await save_series(series)
+ 
+        await message.answer(
+            f"✅ <b>Qismlar qo'shildi!</b>\n\n"
+            f"📺 Serial: <b>{series[code]['title']}</b>\n"
+            f"🎞 Jami qismlar: <b>{total_now} ta</b>\n"
+            f"➕ Qo'shildi: <b>{total} ta</b>",
+            reply_markup=admin_keyboard
+        )
+        await state.set_state(AdminFSM.idle)
+    else:
+        await message.answer(
+            f"✅ <b>{current_num}-qism saqlandi!</b>\n\n"
+            f"📤 <b>{current_num + 1}-qismni yuboring</b> ({uploaded}/{total}):"
+        )
+ 
+@dp.message(AdminFSM.waiting_for_add_ep_file)
+async def admin_add_ep_wrong(message: Message, state: FSMContext):
+    data = await state.get_data()
+    current = data.get("add_ep_current", 1)
+    await message.answer(f"⚠️ {current}-qism uchun video yoki fayl yuboring!")
  
 # ============================================================
 # ADMIN — BARCHA KINOLAR VA SERIALLAR
@@ -412,7 +518,6 @@ async def kino_list(message: Message):
         return
     movies = await load_data()
     series = await load_series()
- 
     text = ""
     if movies:
         text += f"🎬 <b>Kinolar ({len(movies)} ta):</b>\n"
@@ -420,19 +525,18 @@ async def kino_list(message: Message):
             title = v.get("title", "Nomsiz") if isinstance(v, dict) else "Nomsiz"
             text += f"  🔑 <code>{k}</code> — {title}\n"
         text += "\n"
- 
     if series:
         text += f"📺 <b>Seriallar ({len(series)} ta):</b>\n"
         for k, v in series.items():
-            text += f"  🔑 <code>{k}</code> — {v.get('title', 'Nomsiz')} ({v.get('total', 0)} qism)\n"
- 
+            ep_count = len(v.get("episodes", []))
+            text += f"  🔑 <code>{k}</code> — {v.get('title', 'Nomsiz')} ({ep_count} qism)\n"
     if not text:
         await message.answer("🚫 Hozircha hech narsa yo'q.")
     else:
         await message.answer(text)
  
 # ============================================================
-# ADMIN — KINO/SERIAL O'CHIRISH
+# ADMIN — O'CHIRISH
 # ============================================================
 @dp.message(F.text == "🗑 Kino o'chirish")
 async def admin_delete_start(message: Message, state: FSMContext):
@@ -440,11 +544,9 @@ async def admin_delete_start(message: Message, state: FSMContext):
         return
     movies = await load_data()
     series = await load_series()
- 
     if not movies and not series:
         await message.answer("🚫 O'chiriladigan narsa yo'q.")
         return
- 
     text = "🗑 <b>O'chirish uchun kodni kiriting:</b>\n\n"
     if movies:
         text += "🎬 Kinolar:\n"
@@ -454,8 +556,8 @@ async def admin_delete_start(message: Message, state: FSMContext):
     if series:
         text += "\n📺 Seriallar:\n"
         for k, v in series.items():
-            text += f"  • <code>{k}</code> — {v.get('title', 'Nomsiz')}\n"
- 
+            ep_count = len(v.get("episodes", []))
+            text += f"  • <code>{k}</code> — {v.get('title', 'Nomsiz')} ({ep_count} qism)\n"
     await message.answer(text, reply_markup=ReplyKeyboardRemove())
     await state.set_state(AdminFSM.waiting_for_delete)
  
@@ -464,7 +566,6 @@ async def admin_delete(message: Message, state: FSMContext):
     code = message.text.strip().lower()
     movies = await load_data()
     series = await load_series()
- 
     if code in movies:
         title = movies[code].get("title", "Nomsiz") if isinstance(movies[code], dict) else "Nomsiz"
         del movies[code]
@@ -476,8 +577,7 @@ async def admin_delete(message: Message, state: FSMContext):
         await save_series(series)
         await message.answer(f"✅ Serial <b>'{title}'</b> o'chirildi!", reply_markup=admin_keyboard)
     else:
-        await message.answer(f"❌ <b>'{code}'</b> kodi topilmadi.", reply_markup=admin_keyboard)
- 
+        await message.answer(f"❌ <b>'{code}'</b> topilmadi.", reply_markup=admin_keyboard)
     await state.set_state(AdminFSM.idle)
  
 # ============================================================
@@ -507,34 +607,31 @@ async def admin_save_channel(message: Message, state: FSMContext):
         channel_name = parts[2]
         if not channel_link.startswith("https://t.me/"):
             raise ValueError()
- 
         channels = await load_channels()
         if len(channels) >= 10:
-            await message.answer("❌ Maksimal 10 ta kanal! Avval birini o'chiring.", reply_markup=admin_keyboard)
+            await message.answer("❌ Maksimal 10 ta kanal!", reply_markup=admin_keyboard)
             await state.set_state(AdminFSM.idle)
             return
         if any(c["id"] == channel_id for c in channels):
             await message.answer("⚠️ Bu kanal allaqachon qo'shilgan!", reply_markup=admin_keyboard)
             await state.set_state(AdminFSM.idle)
             return
- 
         me = await bot.get_me()
         member = await bot.get_chat_member(chat_id=channel_id, user_id=me.id)
         if member.status not in ("administrator", "creator"):
-            await message.answer("❌ Bot kanalda admin emas! Avval admin qilib qo'ying.", reply_markup=admin_keyboard)
+            await message.answer("❌ Bot kanalda admin emas!", reply_markup=admin_keyboard)
             await state.set_state(AdminFSM.idle)
             return
- 
         channels.append({"id": channel_id, "link": channel_link, "name": channel_name})
         await save_channels(channels)
         await message.answer(
-            f"✅ <b>Kanal qo'shildi!</b>\n📢 {channel_name}\n🆔 <code>{channel_id}</code>",
+            f"✅ <b>Kanal qo'shildi!</b>\n📢 {channel_name}",
             reply_markup=admin_keyboard
         )
     except ValueError:
         await message.answer(
             "❌ Format noto'g'ri!\n\n"
-            "To'g'ri format:\n<code>-1001234567890 | https://t.me/kanal | Kanal nomi</code>",
+            "<code>-1001234567890 | https://t.me/kanal | Kanal nomi</code>",
             reply_markup=admin_keyboard
         )
     except Exception as e:
@@ -550,12 +647,14 @@ async def admin_channels_list(message: Message):
         return
     channels = await load_channels()
     if not channels:
-        await message.answer("📋 Hozircha kanal yo'q.\n⚠️ Kanal bo'lmasa, hamma ko'ra oladi.")
+        await message.answer("📋 Kanal yo'q.\n⚠️ Kanal bo'lmasa, hamma ko'ra oladi.")
         return
     text = f"📋 <b>Kanallar ({len(channels)}/10):</b>\n\n"
     for i, ch in enumerate(channels, 1):
         text += f"{i}. <b>{ch['name']}</b> — <code>{ch['id']}</code>\n"
-    buttons = [[InlineKeyboardButton(text=f"🗑 {ch['name']}", callback_data=f"del_ch_{ch['id']}")] for ch in channels]
+    buttons = [[InlineKeyboardButton(
+        text=f"🗑 {ch['name']}", callback_data=f"del_ch_{ch['id']}"
+    )] for ch in channels]
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
  
 @dp.callback_query(F.data.startswith("del_ch_"))
@@ -617,7 +716,6 @@ async def admin_broadcast_send(message: Message, state: FSMContext):
         await message.answer("👤 Foydalanuvchilar yo'q.", reply_markup=admin_keyboard)
         await state.set_state(AdminFSM.idle)
         return
- 
     sent = failed = 0
     status_msg = await message.answer(f"⏳ Yuborilmoqda... 0/{len(users)}")
     for i, uid in enumerate(users):
@@ -632,7 +730,6 @@ async def admin_broadcast_send(message: Message, state: FSMContext):
             except Exception:
                 pass
         await asyncio.sleep(0.05)
- 
     await status_msg.edit_text(
         f"✅ <b>Xabar yuborildi!</b>\n✔️ Muvaffaqiyatli: <b>{sent}</b>\n❌ Xato: <b>{failed}</b>"
     )
@@ -649,9 +746,6 @@ async def admin_logout(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("👋 Admin paneldan chiqdingiz.", reply_markup=ReplyKeyboardRemove())
  
-# ============================================================
-# ADMIN — /stats tez buyrug'i
-# ============================================================
 @dp.message(F.text == "/stats")
 async def stats_cmd(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -660,27 +754,23 @@ async def stats_cmd(message: Message):
     series = await load_series()
     stats = await load_stats()
     await message.answer(
-        f"🎬 Kinolar: <b>{len(movies)}</b> | 📺 Seriallar: <b>{len(series)}</b> | "
-        f"👤 Users: <b>{len(stats.get('users', []))}</b>"
+        f"🎬 {len(movies)} kino | 📺 {len(series)} serial | 👤 {len(stats.get('users', []))} user"
     )
  
 # ============================================================
-# FOYDALANUVCHI — Serial qismlarini ko'rish (callback)
+# FOYDALANUVCHI — Serial qismini yuborish (callback)
 # ============================================================
 @dp.callback_query(F.data.startswith("ep_"))
 async def send_episode(callback: types.CallbackQuery):
-    # ep_<code>_<episode_number>
     parts = callback.data.split("_")
     if len(parts) < 3:
         return
- 
     code = parts[1]
     try:
         ep_num = int(parts[2])
     except ValueError:
         return
  
-    # Obuna tekshiruvi
     not_sub = await check_subscriptions(callback.from_user.id)
     if not_sub:
         await callback.answer("❌ Avval kanallarga obuna bo'ling!", show_alert=True)
@@ -694,16 +784,13 @@ async def send_episode(callback: types.CallbackQuery):
     s = series[code]
     episodes = s.get("episodes", [])
     idx = ep_num - 1
- 
     if idx < 0 or idx >= len(episodes):
         await callback.answer("❌ Qism topilmadi!", show_alert=True)
         return
  
     ep = episodes[idx]
     caption = f"📺 <b>{s['title']}</b>\n🎞 <b>{ep_num}-qism</b>"
- 
     await callback.answer()
- 
     try:
         if ep["type"] == "document":
             await callback.message.answer_document(ep["file_id"], caption=caption)
@@ -714,12 +801,11 @@ async def send_episode(callback: types.CallbackQuery):
         await callback.message.answer("❌ Qismni yuborishda xato yuz berdi.")
  
 # ============================================================
-# FOYDALANUVCHI — Kod kiritish (kino yoki serial)
+# FOYDALANUVCHI — Kod kiritish
 # ============================================================
 @dp.message(UserFSM.waiting_for_movie_code, F.text)
 async def user_enter_code(message: Message, state: FSMContext):
     user_id = message.from_user.id
- 
     not_sub = await check_subscriptions(user_id)
     if not_sub:
         await show_subscribe_message(message, not_sub)
@@ -736,7 +822,6 @@ async def user_enter_code(message: Message, state: FSMContext):
         file_id = movie["file_id"] if isinstance(movie, dict) else movie
         ftype = movie.get("type", "video") if isinstance(movie, dict) else "video"
         title = movie.get("title", "Kino") if isinstance(movie, dict) else "Kino"
- 
         caption = f"🎬 <b>{title}</b>\n\nBoshqa kod kiriting:"
         try:
             if ftype == "document":
@@ -744,16 +829,16 @@ async def user_enter_code(message: Message, state: FSMContext):
             else:
                 await message.answer_video(file_id, caption=caption)
         except Exception as e:
-            print(f"[XATO] Kino yuborishda: {e}")
-            await message.answer("❌ Kino yuborishda xato. Admin bilan bog'laning.")
+            print(f"[XATO] Kino: {e}")
+            await message.answer("❌ Kino yuborishda xato.")
         return
  
     # ---- SERIAL ----
     if code in series:
         s = series[code]
         title = s.get("title", "Serial")
-        total = s.get("total", 0)
         episodes = s.get("episodes", [])
+        total = len(episodes)
  
         if not episodes:
             await message.answer("❌ Serial qismlari topilmadi.")
@@ -764,24 +849,24 @@ async def user_enter_code(message: Message, state: FSMContext):
         caption = f"📺 <b>{title}</b>\n🎞 <b>1-qism</b>"
         try:
             if ep["type"] == "document":
-                sent = await message.answer_document(ep["file_id"], caption=caption)
+                await message.answer_document(ep["file_id"], caption=caption)
             else:
-                sent = await message.answer_video(ep["file_id"], caption=caption)
+                await message.answer_video(ep["file_id"], caption=caption)
         except Exception as e:
-            print(f"[XATO] 1-qism yuborishda: {e}")
-            await message.answer("❌ Serial yuborishda xato. Admin bilan bog'laning.")
+            print(f"[XATO] 1-qism: {e}")
+            await message.answer("❌ Serial yuborishda xato.")
             return
  
-        # Barcha qismlar tugmalari
+        # Qismlar tugmalari (▶️ belgisiz)
         if total > 1:
             buttons = []
             row = []
             for i in range(1, total + 1):
                 row.append(InlineKeyboardButton(
-                    text=f"▶️ {i}-qism",
+                    text=f"{i}-qism",
                     callback_data=f"ep_{code}_{i}"
                 ))
-                if len(row) == 4:  # Har qatorda 4 ta tugma
+                if len(row) == 4:
                     buttons.append(row)
                     row = []
             if row:
@@ -806,11 +891,9 @@ async def user_enter_code(message: Message, state: FSMContext):
 async def handle_text(message: Message, state: FSMContext):
     user_id = message.from_user.id
     current_state = await state.get_state()
- 
     if user_id == ADMIN_ID and current_state is None:
         await message.answer("/start yuboring.")
         return
- 
     if current_state is None:
         not_sub = await check_subscriptions(user_id)
         if not_sub:
@@ -820,7 +903,7 @@ async def handle_text(message: Message, state: FSMContext):
             await state.set_state(UserFSM.waiting_for_movie_code)
  
 # ============================================================
-# BOTNI ISHGA TUSHIRISH
+# ISHGA TUSHIRISH
 # ============================================================
 async def main():
     print("=" * 40)
@@ -834,7 +917,7 @@ async def main():
     if channels:
         print(f"📢 Kanallar: {[ch['name'] for ch in channels]}")
     else:
-        print("📢 Kanallar: Yo'q (hamma ko'ra oladi)")
+        print("📢 Kanallar: Yo'q")
     print("=" * 40)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
