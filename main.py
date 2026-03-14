@@ -28,7 +28,7 @@ CHANNEL_ID = ---1002668158270  # <-- O'ZGARTIRING
 
 CHANNEL_LINK = "https://t.me/org_itachi"  # <-- O'ZGARTIRING
 
-ADMIN_ID = 7752032178  # <-- O'ZGARTIRING (o'z Telegram ID'ingiz)
+ADMIN_ID = 6292545074  # <-- O'ZGARTIRING (o'z Telegram ID'ingiz)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "itachi201028")  # <-- O'ZGARTIRING
 
 # ============================================================
