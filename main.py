@@ -24,9 +24,9 @@ TOKEN = os.getenv("BOT_TOKEN", "8610997909:AAE43YuVZDWbK-3NsrcAXVdS_dac7FuHeRU")
 # 1. @username_to_id_bot ga kanalingizni forward qiling
 # 2. Yoki botni kanalga admin qiling va https://api.telegram.org/bot<TOKEN>/getUpdates dan toping
 # Misol: -1001234567890  (manfiy raqam, 100... bilan boshlanadi)
-CHANNEL_ID = --1002554275258  # <-- O'ZGARTIRING
+CHANNEL_ID = ---1002668158270  # <-- O'ZGARTIRING
 
-CHANNEL_LINK = "https://t.me/+55LGlhaAD7A2MTY6"  # <-- O'ZGARTIRING
+CHANNEL_LINK = "https://t.me/org_itachi"  # <-- O'ZGARTIRING
 
 ADMIN_ID = 7752032178  # <-- O'ZGARTIRING (o'z Telegram ID'ingiz)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "itachi201028")  # <-- O'ZGARTIRING
