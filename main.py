@@ -15,12 +15,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
 
 # -------- Sozlamalar --------
-TOKEN = os.getenv("BOT_TOKEN", "8293177634:AAE_-9we0HKtTv8xVX8TCNq3bYRKzWHS0UI")
+TOKEN = os.getenv("BOT_TOKEN", "8610997909:AAHDd21z6AfofoXocY5CjpzCfaZgQ_yPbCE")
 CHANNEL_ID = -1003135489170
-CHANNEL_USERNAME = "https://t.me/+gnVLA0l9roNkM2Yy"
-CHANNEL_LINK = f"https://t.me/{CHANNEL_USERNAME}"
+CHANNEL_USERNAME = "https://t.me/+DF_mTtABwaU5ZWEy"
+CHANNEL_LINK = f"https://t.me/org_itachi"
 ADMIN_ID = 7752032178
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "superadmin123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "itachi201028")
 
 # -------- Bot va dispatcher --------
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
