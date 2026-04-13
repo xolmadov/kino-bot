@@ -376,9 +376,9 @@ async def send_episode(callback: types.CallbackQuery):
     await callback.answer()
     try:
         if ep["type"] == "document":
-            await callback.message.answer_document(ep["file_id"], caption=caption)
+            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True)
         else:
-            await callback.message.answer_video(ep["file_id"], caption=caption)
+            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True)
     except Exception as e:
         print(f"[XATO] Qism: {e}")
         await callback.message.answer("❌ Qismni yuborishda xato.")
@@ -409,9 +409,9 @@ async def pick_content(callback: types.CallbackQuery):
         caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
         try:
             if ftype == "document":
-                await callback.message.answer_document(file_id, caption=caption)
+                await callback.message.answer_document(file_id, caption=caption, protect_content=True)
             else:
-                await callback.message.answer_video(file_id, caption=caption)
+                await callback.message.answer_video(file_id, caption=caption, protect_content=True)
         except Exception:
             await callback.message.answer("❌ Kino yuborishda xato.")
     elif kind == "series":
@@ -1085,9 +1085,9 @@ async def send_series_first(message: Message, code: str, s: dict):
     caption = f"📺 <b>{title}</b>\n🎞 <b>1-qism</b>"
     try:
         if ep["type"] == "document":
-            await message.answer_document(ep["file_id"], caption=caption)
+            await message.answer_document(ep["file_id"], caption=caption, protect_content=True)
         else:
-            await message.answer_video(ep["file_id"], caption=caption)
+            await message.answer_video(ep["file_id"], caption=caption, protect_content=True)
     except Exception as e:
         print(f"[XATO] 1-qism: {e}")
         await message.answer("❌ Serial yuborishda xato.")
@@ -1124,9 +1124,9 @@ async def user_enter_code(message: Message, state: FSMContext):
         caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
         try:
             if ftype == "document":
-                await message.answer_document(file_id, caption=caption)
+                await message.answer_document(file_id, caption=caption, protect_content=True)
             else:
-                await message.answer_video(file_id, caption=caption)
+                await message.answer_video(file_id, caption=caption, protect_content=True)
         except Exception:
             await message.answer("❌ Kino yuborishda xato.")
         return
@@ -1152,9 +1152,9 @@ async def user_enter_code(message: Message, state: FSMContext):
             caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
             try:
                 if ftype == "document":
-                    await message.answer_document(file_id, caption=caption)
+                    await message.answer_document(file_id, caption=caption, protect_content=True)
                 else:
-                    await message.answer_video(file_id, caption=caption)
+                    await message.answer_video(file_id, caption=caption, protect_content=True)
             except Exception:
                 await message.answer("❌ Kino yuborishda xato.")
         else:
