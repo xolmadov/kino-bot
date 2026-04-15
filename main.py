@@ -37,6 +37,7 @@ SERIES_FILE = "series.json"
 STATS_FILE = "stats.json"
 CHANNELS_FILE = "channels.json"
 ADMINS_FILE = "admins.json"
+SUBSCRIBERS_FILE = "subscribers.json"   # <-- YANGI: doimiy obunachi bazasi
 
 data_lock = asyncio.Lock()
 series_lock = asyncio.Lock()
@@ -98,14 +99,32 @@ async def save_channels(channels: list):
         json.dump(channels, f, indent=4, ensure_ascii=False)
 
 # ============================================================
+# OBUNACHI BAZASI (doimiy saqlash)
+# ============================================================
+async def load_subscribers() -> list:
+    """subscribers.json dan foydalanuvchi ID larini yuklaydi"""
+    try:
+        with open(SUBSCRIBERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+async def save_subscribers(subscribers: list):
+    """subscribers.json ga foydalanuvchi ID larini saqlaydi"""
+    with open(SUBSCRIBERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(subscribers, f, indent=4)
+
+async def add_subscriber(user_id: int):
+    """Yangi obunachini bazaga qo'shadi (takrorlanmaydi)"""
+    subscribers = await load_subscribers()
+    if user_id not in subscribers:
+        subscribers.append(user_id)
+        await save_subscribers(subscribers)
+
+# ============================================================
 # ADMINLAR TIZIMI
 # ============================================================
 async def load_admins() -> dict:
-    """
-    {
-      "123456789": {"name": "Ali", "added_by": 6292545074}
-    }
-    """
     try:
         with open(ADMINS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -117,24 +136,25 @@ async def save_admins(admins: dict):
         json.dump(admins, f, indent=4, ensure_ascii=False)
 
 async def is_admin(user_id: int) -> bool:
-    """Foydalanuvchi admin yoki owner ekanligini tekshiradi"""
     if user_id == OWNER_ID:
         return True
     admins = await load_admins()
     return str(user_id) in admins
 
 async def track_user(user_id: int):
+    # stats.json ga ham saqlaydi (mavjud logika)
     stats = await load_stats()
     if user_id not in stats["users"]:
         stats["users"].append(user_id)
     stats["requests"] = stats.get("requests", 0) + 1
     await save_stats(stats)
+    # subscribers.json ga ham saqlaydi (doimiy baza)
+    await add_subscriber(user_id)
 
 # ============================================================
 # ADMIN KLAVIATURASI
 # ============================================================
 def get_admin_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    """Owner uchun qo'shimcha tugmalar ko'rsatiladi"""
     base = [
         [KeyboardButton(text="🎬 Kino qo'shish"), KeyboardButton(text="📺 Serial qo'shish")],
         [KeyboardButton(text="➕ Serialga qism qo'shish")],
@@ -287,7 +307,7 @@ async def start_cmd(message: Message, state: FSMContext):
             await message.answer("✅ Admin sifatida kirgansiz.", reply_markup=get_admin_keyboard(user_id))
         return
 
-    await track_user(user_id)
+    await track_user(user_id)  # stats.json + subscribers.json ga saqlaydi
     not_sub = await check_subscriptions(user_id)
     if not_sub:
         await show_subscribe_message(message, not_sub)
@@ -602,12 +622,12 @@ async def admin_add_ep_start(message: Message, state: FSMContext):
         return
     series = await load_series()
     if not series:
-        await message.answer("🚫 Hozircha serial yo'q.")
+        await message.answer("❌ Hech qanday serial yo'q.")
         return
-    text = "📺 <b>Qaysi serialga qism qo'shmoqchisiz?</b>\n\nKodini kiriting:\n\n"
-    for code, s in series.items():
-        ep_count = len(s.get("episodes", []))
-        text += f"• <code>{code}</code> — {s.get('title', 'Nomsiz')} ({ep_count} qism)\n"
+    text = "📺 <b>Serial kodini kiriting:</b>\n\n"
+    for k, v in series.items():
+        ep_count = len(v.get("episodes", []))
+        text += f"  • <code>{k}</code> — {v.get('title', 'Nomsiz')} ({ep_count} qism)\n"
     await message.answer(text, reply_markup=ReplyKeyboardRemove())
     await state.set_state(AdminFSM.waiting_for_add_ep_code)
 
@@ -846,26 +866,29 @@ async def statistika(message: Message):
     stats = await load_stats()
     channels = await load_channels()
     admins = await load_admins()
+    subscribers = await load_subscribers()
     await message.answer(
         f"📊 <b>Bot statistikasi:</b>\n\n"
         f"🎬 Kinolar: <b>{len(movies)}</b>\n"
         f"📺 Seriallar: <b>{len(series)}</b>\n"
         f"👤 Foydalanuvchilar: <b>{len(stats.get('users', []))}</b>\n"
+        f"💾 Doimiy obunachlar: <b>{len(subscribers)}</b>\n"
         f"📥 Jami so'rovlar: <b>{stats.get('requests', 0)}</b>\n"
         f"📢 Kanallar: <b>{len(channels)}/10</b>\n"
         f"🔧 Adminlar: <b>{len(admins)}</b> (+ 1 owner)"
     )
 
 # ============================================================
-# ADMIN — OMMAVIY XABAR
+# ADMIN — OMMAVIY XABAR (subscribers.json dan yuboradi)
 # ============================================================
 @dp.message(F.text == "📣 Xabar yuborish")
 async def admin_broadcast_start(message: Message, state: FSMContext):
     if not await is_admin(message.from_user.id):
         return
-    stats = await load_stats()
+    subscribers = await load_subscribers()
     await message.answer(
-        f"📣 <b>Ommaviy xabar</b>\n👤 Foydalanuvchilar: <b>{len(stats.get('users', []))}</b>\n\n"
+        f"📣 <b>Ommaviy xabar</b>\n"
+        f"💾 Doimiy obunachlar: <b>{len(subscribers)}</b>\n\n"
         "Xabarni kiriting (/cancel — bekor qilish):",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -879,16 +902,16 @@ async def broadcast_cancel(message: Message, state: FSMContext):
 
 @dp.message(AdminFSM.waiting_for_broadcast, F.text)
 async def broadcast_send(message: Message, state: FSMContext):
-    stats = await load_stats()
-    users = stats.get("users", [])
+    # subscribers.json dan yuboradi — bot o'chirilganda ham saqlanadi!
+    subscribers = await load_subscribers()
     uid = message.from_user.id
-    if not users:
-        await message.answer("👤 Foydalanuvchilar yo'q.", reply_markup=get_admin_keyboard(uid))
+    if not subscribers:
+        await message.answer("👤 Obunachlar yo'q.", reply_markup=get_admin_keyboard(uid))
         await state.set_state(AdminFSM.idle)
         return
     sent = failed = 0
-    status_msg = await message.answer(f"⏳ Yuborilmoqda... 0/{len(users)}")
-    for i, u in enumerate(users):
+    status_msg = await message.answer(f"⏳ Yuborilmoqda... 0/{len(subscribers)}")
+    for i, u in enumerate(subscribers):
         try:
             await bot.send_message(u, f"📣 <b>Yangilik:</b>\n\n{message.text}")
             sent += 1
@@ -896,7 +919,7 @@ async def broadcast_send(message: Message, state: FSMContext):
             failed += 1
         if (i + 1) % 20 == 0:
             try:
-                await status_msg.edit_text(f"⏳ Yuborilmoqda... {i+1}/{len(users)}")
+                await status_msg.edit_text(f"⏳ Yuborilmoqda... {i+1}/{len(subscribers)}")
             except Exception:
                 pass
         await asyncio.sleep(0.05)
@@ -916,8 +939,7 @@ async def owner_add_admin(message: Message, state: FSMContext):
     await message.answer(
         "👑 <b>Yangi admin qo'shish</b>\n\n"
         "Admin bo'lajak odamning <b>Telegram ID</b>sini kiriting:\n\n"
-        "💡 ID topish: @userinfobot ga /start yuboring\n"
-        "Yoki u odam botga /start yuborganidan keyin ID bilish mumkin\n\n"
+        "💡 ID topish: @userinfobot ga /start yuboring\n\n"
         "/cancel — bekor qilish",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -944,15 +966,15 @@ async def owner_save_admin(message: Message, state: FSMContext):
 
     if str(new_admin_id) in admins:
         admin_info = admins[str(new_admin_id)]
+        name = admin_info.get('name', 'Noma\'lum')
         await message.answer(
             f"⚠️ Bu foydalanuvchi allaqachon admin!\n"
-            f"👤 Ismi: {admin_info.get('name', 'Noma\'lum')}",
+            f"👤 Ismi: {name}",
             reply_markup=get_admin_keyboard(OWNER_ID)
         )
         await state.set_state(AdminFSM.idle)
         return
 
-    # Foydalanuvchi haqida ma'lumot olishga urinish
     try:
         chat = await bot.get_chat(new_admin_id)
         name = chat.full_name or f"ID: {new_admin_id}"
@@ -968,7 +990,6 @@ async def owner_save_admin(message: Message, state: FSMContext):
     }
     await save_admins(admins)
 
-    # Yangi adminga xabar yuborish
     try:
         await bot.send_message(
             new_admin_id,
@@ -996,7 +1017,7 @@ async def owner_admins_list(message: Message):
         return
     admins = await load_admins()
 
-    text = f"👥 <b>Adminlar ro'yxati:</b>\n\n"
+    text = "👥 <b>Adminlar ro'yxati:</b>\n\n"
     text += f"👑 <b>Bosh Admin (siz)</b>\n   🆔 <code>{OWNER_ID}</code>\n\n"
 
     if not admins:
@@ -1005,17 +1026,19 @@ async def owner_admins_list(message: Message):
         return
 
     for uid, info in admins.items():
+        name = info.get('name', 'Noma\'lum')
+        uname = info.get('username', 'noma\'lum')
         text += (
-            f"🔧 <b>{info.get('name', 'Noma\'lum')}</b>\n"
+            f"🔧 <b>{name}</b>\n"
             f"   🆔 <code>{uid}</code>\n"
-            f"   📱 {info.get('username', 'noma\'lum')}\n\n"
+            f"   📱 {uname}\n\n"
         )
 
-    # O'chirish tugmalari
     buttons = []
     for uid, info in admins.items():
+        name = info.get('name', 'Noma\'lum')
         buttons.append([InlineKeyboardButton(
-            text=f"🗑 {info.get('name', 'Noma\'lum')} o'chirish",
+            text=f"🗑 {name} o'chirish",
             callback_data=f"del_admin_{uid}"
         )])
 
@@ -1038,7 +1061,6 @@ async def delete_admin_cb(callback: types.CallbackQuery):
     del admins[admin_id]
     await save_admins(admins)
 
-    # O'chirilgan adminga xabar yuborish
     try:
         await bot.send_message(
             int(admin_id),
@@ -1067,8 +1089,10 @@ async def stats_cmd(message: Message):
     movies = await load_data()
     series = await load_series()
     stats = await load_stats()
+    subscribers = await load_subscribers()
     await message.answer(
-        f"🎬 {len(movies)} kino | 📺 {len(series)} serial | 👤 {len(stats.get('users', []))} user"
+        f"🎬 {len(movies)} kino | 📺 {len(series)} serial | "
+        f"👤 {len(stats.get('users', []))} user | 💾 {len(subscribers)} obunachi"
     )
 
 # ============================================================
@@ -1204,7 +1228,9 @@ async def main():
     channels = await load_channels()
     movies = await load_data()
     series = await load_series()
+    subscribers = await load_subscribers()
     print(f"🎬 Kinolar: {len(movies)} ta | 📺 Seriallar: {len(series)} ta")
+    print(f"💾 Doimiy obunachlar: {len(subscribers)} ta")
     if channels:
         print(f"📢 Kanallar: {[ch['name'] for ch in channels]}")
     else:
