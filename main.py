@@ -131,8 +131,7 @@ async def track_user(user_id: int):
     await save_stats(stats)
     await add_subscriber(user_id)
 
-# ==========
-==================================================
+# ============================================================
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
@@ -230,8 +229,7 @@ def build_episode_keyboard(code: str, total: int, page: int) -> InlineKeyboardMa
     if page > 0:
         nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"eppage_{code}_{page - 1}"))
     if total_pages > 1:
-        nav.append(InlineKeyboardButton(text
-=f"{page + 1}/{total_pages}", callback_data="noop"))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"eppage_{code}_{page + 1}"))
     if nav:
@@ -422,11 +420,101 @@ async def pick_content(callback: types.CallbackQuery):
 # ============================================================
 @dp.message(AdminFSM.waiting_for_password, F.text)
 async def admin_login(message: Message, state: FSMContext):
-    if message.text.strip() != ADMIN_PASSWORD:
-    await message.answer("❌ Parol noto'g'ri!")
-    return
-await state.set_state(AdminFSM.idle)
-await message.answer("✅ Kirdingiz!", reply_markup=get_admin_keyboard(message.from_user.id))
+    if message.text.strip() == ADMIN_PASSWORD:
+        user_id = message.from_user.id
+        role = "👑 Bosh Admin" if user_id == OWNER_ID else "🔧 Admin"
+        await message.answer(f"✅ <b>Xush kelibsiz! ({role})</b>", reply_markup=get_admin_keyboard(user_id))
+        await state.set_state(AdminFSM.idle)
+    else:
+        await message.answer("❌ Noto'g'ri parol!")
+
+# ============================================================
+# ADMIN — KINO QO'SHISH
+# ============================================================
+@dp.message(F.text == "🎬 Kino qo'shish")
+async def admin_add_movie(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    await message.answer("🎥 <b>Kino faylini yuboring:</b>\n💡 Document formatida yuboring!", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(AdminFSM.waiting_for_video)
+
+@dp.message(AdminFSM.waiting_for_video, F.video | F.document)
+async def admin_receive_video(message: Message, state: FSMContext):
+    if message.video:
+        file_id, ftype = message.video.file_id, "video"
+    else:
+        file_id, ftype = message.document.file_id, "document"
+    await state.update_data(file_id=file_id, file_type=ftype)
+    await message.answer("✏️ <b>Kino nomini kiriting:</b>")
+    await state.set_state(AdminFSM.waiting_for_title)
+
+@dp.message(AdminFSM.waiting_for_video)
+async def admin_wrong_file(message: Message):
+    await message.answer("⚠️ Video yoki fayl yuboring!")
+
+@dp.message(AdminFSM.waiting_for_title, F.text)
+async def admin_movie_title(message: Message, state: FSMContext):
+    title = message.text.strip()
+    if len(title) > 100:
+        await message.answer("❌ Nom 100 belgidan kam bo'lsin.")
+        return
+    await state.update_data(title=title)
+    await message.answer("🔑 <b>Kino kodini kiriting:</b>\nMasalan: <code>avatar2</code>")
+    await state.set_state(AdminFSM.waiting_for_code)
+
+@dp.message(AdminFSM.waiting_for_code, F.text)
+async def admin_save_movie(message: Message, state: FSMContext):
+    code = message.text.strip().lower()
+    if not code or len(code) > 30:
+        await message.answer("❌ Kod 1-30 belgi bo'lishi kerak.")
+        return
+    all_data = await load_data()
+    all_series = await load_series()
+    if code in all_data or code in all_series:
+        await message.answer(f"⚠️ <b>'{code}'</b> kodi mavjud!")
+        return
+    data = await state.get_data()
+    all_data[code] = {
+        "file_id": data["file_id"],
+        "type": data.get("file_type", "video"),
+        "title": data.get("title", "Nomsiz"),
+        "kind": "movie"
+    }
+    await save_data(all_data)
+    uid = message.from_user.id
+    await message.answer(
+        f"✅ <b>Kino saqlandi!</b>\n\n"
+        f"🎬 Nomi: <b>{data.get('title')}</b>\n"
+        f"🔑 Kodi: <code>{code}</code>",
+        reply_markup=get_admin_keyboard(uid)
+    )
+    await state.set_state(AdminFSM.idle)
+
+# ============================================================
+# ADMIN — SERIAL QO'SHISH
+# ============================================================
+@dp.message(F.text == "📺 Serial qo'shish")
+async def admin_add_series(message: Message, state: FSMContext):
+    if not await is_admin(message.from_user.id):
+        return
+    await message.answer("📺 <b>Serial nomini kiriting:</b>", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(AdminFSM.waiting_for_series_title)
+
+@dp.message(AdminFSM.waiting_for_series_title, F.text)
+async def admin_series_title(message: Message, state: FSMContext):
+    title = message.text.strip()
+    if len(title) > 100:
+        await message.answer("❌ Nom 100 belgidan kam bo'lsin.")
+        return
+    await state.update_data(series_title=title, episodes=[])
+    await message.answer(f"✅ Nomi: <b>{title}</b>\n\n🔑 <b>Serial kodini kiriting:</b>")
+    await state.set_state(AdminFSM.waiting_for_series_code)
+
+@dp.message(AdminFSM.waiting_for_series_code, F.text)
+async def admin_series_code(message: Message, state: FSMContext):
+    code = message.text.strip().lower()
+    if not code or len(code) > 30:
+        await message.answer("❌ Kod 1-30 belgi bo'lishi kerak.")
         return
     all_data = await load_data()
     all_series = await load_series()
