@@ -422,7 +422,7 @@ async def pick_content(callback: types.CallbackQuery):
 # ============================================================
 @dp.message(AdminFSM.waiting_for_password, F.text)
 async def admin_login(message: Message, state: FSMContext):
-    if message.trak.")
+    if message.".trak.")
         return
     all_data = await load_data()
     all_series = await load_series()
