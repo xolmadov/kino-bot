@@ -1,10 +1,10 @@
+
 import asyncio
-import os
 import json
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
-import httpx
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
 from aiogram.types import (
@@ -20,102 +20,121 @@ from aiogram.client.default import DefaultBotProperties
 # SOZLAMALAR
 # ============================================================
 TOKEN = os.getenv("BOT_TOKEN", "8610997909:AAE43YuVZDWbK-3NsrcAXVdS_dac7FuHeRU")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# BOSH ADMIN — o'zgartirib bo'lmaydi, barcha huquqlar bor
 OWNER_ID = 6292545074
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "itachi201028")
 CHANNELS = []
 EP_PER_PAGE = 10
 
 # ============================================================
-# SUPABASE YORDAMCHI FUNKSIYALAR
-# ============================================================
-async def sb_get(key: str):
-    """Supabase dan qiymat olish"""
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/storage",
-            params={"key": f"eq.{key}", "select": "value"},
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}"
-            }
-        )
-        data = r.json()
-        if data:
-            return data[0]["value"]
-        return None
 
-async def sb_set(key: str, value):
-    """Supabase ga qiymat saqlash"""
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            f"{SUPABASE_URL}/rest/v1/storage",
-            json={"key": key, "value": value},
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates"
-            }
-        )
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher(storage=MemoryStorage())
+
+# -------- Fayllar --------
+DATA_FILE = "data.json"
+SERIES_FILE = "series.json"
+STATS_FILE = "stats.json"
+CHANNELS_FILE = "channels.json"
+ADMINS_FILE = "admins.json"
+SUBSCRIBERS_FILE = "subscribers.json"   # <-- YANGI: doimiy obunachi bazasi
+
+data_lock = asyncio.Lock()
+series_lock = asyncio.Lock()
 
 # ============================================================
 # MA'LUMOT YUKLASH / SAQLASH
 # ============================================================
 async def load_data() -> dict:
-    val = await sb_get("movies")
-    return val if val else {}
+    async with data_lock:
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
 
 async def save_data(data: dict):
-    await sb_set("movies", data)
+    async with data_lock:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
 async def load_series() -> dict:
-    val = await sb_get("series")
-    return val if val else {}
+    async with series_lock:
+        try:
+            with open(SERIES_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
 
 async def save_series(data: dict):
-    await sb_set("series", data)
+    async with series_lock:
+        with open(SERIES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
 async def load_stats() -> dict:
-    val = await sb_get("stats")
-    return val if val else {"users": [], "requests": 0}
+    try:
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"users": [], "requests": 0}
 
 async def save_stats(stats: dict):
-    await sb_set("stats", stats)
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=4)
 
 async def load_channels() -> list:
-    val = await sb_get("channels")
-    saved = val if val else []
-    all_ch = list(CHANNELS)
-    for ch in saved:
-        if not any(c["id"] == ch["id"] for c in all_ch):
-            all_ch.append(ch)
-    return all_ch
+    try:
+        with open(CHANNELS_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+        all_ch = list(CHANNELS)
+        for ch in saved:
+            if not any(c["id"] == ch["id"] for c in all_ch):
+                all_ch.append(ch)
+        return all_ch
+    except Exception:
+        return list(CHANNELS)
 
 async def save_channels(channels: list):
-    await sb_set("channels", channels)
+    with open(CHANNELS_FILE, "w", encoding="utf-8") as f:
+        json.dump(channels, f, indent=4, ensure_ascii=False)
 
+# ============================================================
+# OBUNACHI BAZASI (doimiy saqlash)
+# ============================================================
 async def load_subscribers() -> list:
-    val = await sb_get("subscribers")
-    return val if val else []
+    """subscribers.json dan foydalanuvchi ID larini yuklaydi"""
+    try:
+        with open(SUBSCRIBERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 async def save_subscribers(subscribers: list):
-    await sb_set("subscribers", subscribers)
+    """subscribers.json ga foydalanuvchi ID larini saqlaydi"""
+    with open(SUBSCRIBERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(subscribers, f, indent=4)
 
 async def add_subscriber(user_id: int):
+    """Yangi obunachini bazaga qo'shadi (takrorlanmaydi)"""
     subscribers = await load_subscribers()
     if user_id not in subscribers:
         subscribers.append(user_id)
         await save_subscribers(subscribers)
 
+# ============================================================
+# ADMINLAR TIZIMI
+# ============================================================
 async def load_admins() -> dict:
-    val = await sb_get("admins")
-    return val if val else {}
+    try:
+        with open(ADMINS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 async def save_admins(admins: dict):
-    await sb_set("admins", admins)
+    with open(ADMINS_FILE, "w", encoding="utf-8") as f:
+        json.dump(admins, f, indent=4, ensure_ascii=False)
 
 async def is_admin(user_id: int) -> bool:
     if user_id == OWNER_ID:
@@ -124,17 +143,14 @@ async def is_admin(user_id: int) -> bool:
     return str(user_id) in admins
 
 async def track_user(user_id: int):
+    # stats.json ga ham saqlaydi (mavjud logika)
     stats = await load_stats()
     if user_id not in stats["users"]:
         stats["users"].append(user_id)
     stats["requests"] = stats.get("requests", 0) + 1
     await save_stats(stats)
+    # subscribers.json ga ham saqlaydi (doimiy baza)
     await add_subscriber(user_id)
-
-# ============================================================
-
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher(storage=MemoryStorage())
 
 # ============================================================
 # ADMIN KLAVIATURASI
@@ -161,19 +177,25 @@ def get_admin_keyboard(user_id: int) -> ReplyKeyboardMarkup:
 class AdminFSM(StatesGroup):
     waiting_for_password = State()
     idle = State()
+    # Kino
     waiting_for_video = State()
     waiting_for_title = State()
     waiting_for_code = State()
     waiting_for_delete = State()
+    # Serial
     waiting_for_series_title = State()
     waiting_for_series_code = State()
     waiting_for_series_count = State()
     waiting_for_episode = State()
+    # Qism qo'shish
     waiting_for_add_ep_code = State()
     waiting_for_add_ep_count = State()
     waiting_for_add_ep_file = State()
+    # Kanal
     waiting_for_channel = State()
+    # Xabar
     waiting_for_broadcast = State()
+    # Admin qo'shish (faqat owner)
     waiting_for_new_admin_id = State()
 
 class UserFSM(StatesGroup):
@@ -216,6 +238,7 @@ def build_episode_keyboard(code: str, total: int, page: int) -> InlineKeyboardMa
     start = page * EP_PER_PAGE + 1
     end = min(start + EP_PER_PAGE - 1, total)
     total_pages = (total + EP_PER_PAGE - 1) // EP_PER_PAGE
+
     buttons = []
     row = []
     for i in range(start, end + 1):
@@ -225,6 +248,7 @@ def build_episode_keyboard(code: str, total: int, page: int) -> InlineKeyboardMa
             row = []
     if row:
         buttons.append(row)
+
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"eppage_{code}_{page - 1}"))
@@ -234,6 +258,7 @@ def build_episode_keyboard(code: str, total: int, page: int) -> InlineKeyboardMa
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"eppage_{code}_{page + 1}"))
     if nav:
         buttons.append(nav)
+
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ============================================================
@@ -261,6 +286,7 @@ async def search_content(query: str) -> list:
 @dp.message(F.text == "/start")
 async def start_cmd(message: Message, state: FSMContext):
     user_id = message.from_user.id
+
     if await is_admin(user_id):
         cur = await state.get_state()
         admin_active_states = [
@@ -281,7 +307,8 @@ async def start_cmd(message: Message, state: FSMContext):
         else:
             await message.answer("✅ Admin sifatida kirgansiz.", reply_markup=get_admin_keyboard(user_id))
         return
-    await track_user(user_id)
+
+    await track_user(user_id)  # stats.json + subscribers.json ga saqlaydi
     not_sub = await check_subscriptions(user_id)
     if not_sub:
         await show_subscribe_message(message, not_sub)
@@ -397,9 +424,9 @@ async def pick_content(callback: types.CallbackQuery):
             await callback.message.answer("❌ Kino topilmadi.")
             return
         movie = movies[code]
-        file_id = movie["file_id"]
-        ftype = movie.get("type", "video")
-        title = movie.get("title", "Kino")
+        file_id = movie["file_id"] if isinstance(movie, dict) else movie
+        ftype = movie.get("type", "video") if isinstance(movie, dict) else "video"
+        title = movie.get("title", "Kino") if isinstance(movie, dict) else "Kino"
         caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
         try:
             if ftype == "document":
@@ -423,7 +450,10 @@ async def admin_login(message: Message, state: FSMContext):
     if message.text.strip() == ADMIN_PASSWORD:
         user_id = message.from_user.id
         role = "👑 Bosh Admin" if user_id == OWNER_ID else "🔧 Admin"
-        await message.answer(f"✅ <b>Xush kelibsiz! ({role})</b>", reply_markup=get_admin_keyboard(user_id))
+        await message.answer(
+            f"✅ <b>Xush kelibsiz! ({role})</b>",
+            reply_markup=get_admin_keyboard(user_id)
+        )
         await state.set_state(AdminFSM.idle)
     else:
         await message.answer("❌ Noto'g'ri parol!")
@@ -435,7 +465,10 @@ async def admin_login(message: Message, state: FSMContext):
 async def admin_add_movie(message: Message, state: FSMContext):
     if not await is_admin(message.from_user.id):
         return
-    await message.answer("🎥 <b>Kino faylini yuboring:</b>\n💡 Document formatida yuboring!", reply_markup=ReplyKeyboardRemove())
+    await message.answer(
+        "🎥 <b>Kino faylini yuboring:</b>\n💡 Document formatida yuboring!",
+        reply_markup=ReplyKeyboardRemove()
+    )
     await state.set_state(AdminFSM.waiting_for_video)
 
 @dp.message(AdminFSM.waiting_for_video, F.video | F.document)
@@ -476,32 +509,4 @@ async def admin_save_movie(message: Message, state: FSMContext):
     data = await state.get_data()
     all_data[code] = {
         "file_id": data["file_id"],
-        "type": data.get("file_type", "video"),
-        "title": data.get("title", "Nomsiz"),
-        "kind": "movie"
-    }
-    await save_data(all_data)
-    uid = message.from_user.id
-    await message.answer(
-        f"✅ <b>Kino saqlandi!</b>\n\n"
-        f"🎬 Nomi: <b>{data.get('title')}</b>\n"
-        f"🔑 Kodi: <code>{code}</code>",
-        reply_markup=get_admin_keyboard(uid)
-    )
-    await state.set_state(AdminFSM.idle)
-
-# ============================================================
-# ADMIN — SERIAL QO'SHISH
-# ============================================================
-@dp.message(F.text == "📺 Serial qo'shish")
-async def admin_add_series(message: Message, state: FSMContext):
-    if not await is_admin(message.from_user.id):
-        return
-    await message.answer("📺 <b>Serial nomini kiriting:</b>", reply_markup=ReplyKeyboardRemove())
-    await state.set_state(AdminFSM.waiting_for_series_title)
-
-@dp.message(AdminFSM.waiting_for_series_title, F.text)
-async def admin_series_title(message: Message, state: FSMContext):
-    title = message.text.strip()
-    if len(title) > 100:
-        await message.answer("❌ Nom 100 belgidan kam bo'lsin.")
+        "type": dat
