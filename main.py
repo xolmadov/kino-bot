@@ -422,7 +422,11 @@ async def pick_content(callback: types.CallbackQuery):
 # ============================================================
 @dp.message(AdminFSM.waiting_for_password, F.text)
 async def admin_login(message: Message, state: FSMContext):
-    if message.".trak.")
+    if message.text.strip() != ADMIN_PASSWORD:
+    await message.answer("❌ Parol noto'g'ri!")
+    return
+await state.set_state(AdminFSM.idle)
+await message.answer("✅ Kirdingiz!", reply_markup=get_admin_keyboard(message.from_user.id))
         return
     all_data = await load_data()
     all_series = await load_series()
