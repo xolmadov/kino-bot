@@ -209,14 +209,15 @@ async def show_subscribe_message(message: Message, not_sub: list):
 # ============================================================
 # SAHIFALANGAN QISMLAR TUGMASI
 # ============================================================
-def build_episode_keyboard(code: str, total: int, page: int) -> InlineKeyboardMarkup:
+def build_episode_keyboard(code: str, total: int, page: int, active: int = 0) -> InlineKeyboardMarkup:
     start = page * EP_PER_PAGE + 1
     end = min(start + EP_PER_PAGE - 1, total)
     total_pages = (total + EP_PER_PAGE - 1) // EP_PER_PAGE
     buttons = []
     row = []
     for i in range(start, end + 1):
-        row.append(InlineKeyboardButton(text=f"{i}ep", callback_data=f"ep_{code}_{i}"))
+        label = f"▶️ {i}" if i == active else f"{i}"
+        row.append(InlineKeyboardButton(text=label, callback_data=f"ep_{code}_{i}"))
         if len(row) == 5:
             buttons.append(row)
             row = []
@@ -367,14 +368,22 @@ async def send_episode(callback: types.CallbackQuery):
         return
     ep = episodes[idx]
     total = len(episodes)
-    kb = build_episode_keyboard(code, total, (ep_num - 1) // EP_PER_PAGE)
-    caption = f"<b>{s['title']}</b>\n🎞 <b>{ep_num}-qism</b>"
+    page = (ep_num - 1) // EP_PER_PAGE
+    # Update previous message keyboard to highlight selected episode
+    kb_active = build_episode_keyboard(code, total, page, active=ep_num)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb_active)
+    except Exception:
+        pass
+    # Send new episode with keyboard (no active highlight)
+    kb_new = build_episode_keyboard(code, total, page)
+    caption = f"<b>{s['title']}</b>\n<b>{ep_num}-qism</b>"
     await callback.answer()
     try:
         if ep["type"] == "document":
-            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
+            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb_new)
         else:
-            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
+            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb_new)
     except Exception as e:
         print(f"[XATO] Qism: {e}")
         await callback.message.answer("❌ Qismni yuborishda xato.")
@@ -1031,7 +1040,7 @@ async def send_series_first(message: Message, code: str, s: dict):
         return
     ep = episodes[0]
     kb = build_episode_keyboard(code, total, 0)
-    caption = f"<b>{title}</b>\n🎞 <b>1-qism</b>"
+    caption = f"<b>{title}</b>\n<b>1-qism</b>"
     try:
         if ep["type"] == "document":
             await message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
