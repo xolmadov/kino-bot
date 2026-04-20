@@ -359,13 +359,15 @@ async def send_episode(callback: types.CallbackQuery):
         await callback.answer("❌ Qism topilmadi!", show_alert=True)
         return
     ep = episodes[idx]
-    caption = f"📺 <b>{s['title']}</b>\n🎞 <b>{ep_num}-qism</b>"
+    total = len(episodes)
+    kb = build_episode_keyboard(code, total, (ep_num - 1) // EP_PER_PAGE)
+    caption = f"<b>{s['title']}</b>\n🎞 <b>{ep_num}-qism</b>"
     await callback.answer()
     try:
         if ep["type"] == "document":
-            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True)
+            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
         else:
-            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True)
+            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
     except Exception as e:
         print(f"[XATO] Qism: {e}")
         await callback.message.answer("❌ Qismni yuborishda xato.")
@@ -1021,8 +1023,8 @@ async def send_series_first(message: Message, code: str, s: dict):
         await message.answer("❌ Serial qismlari topilmadi.")
         return
     ep = episodes[0]
-    kb = build_episode_keyboard(code, total, 0) if total > 1 else None
-    caption = f"📺 <b>{title}</b>\n🎞 <b>1ep</b>"
+    kb = build_episode_keyboard(code, total, 0)
+    caption = f"<b>{title}</b>\n🎞 <b>1-qism</b>"
     try:
         if ep["type"] == "document":
             await message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
