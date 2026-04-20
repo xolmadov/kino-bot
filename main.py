@@ -1,6 +1,5 @@
 import asyncio
 import os
-import json
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -99,14 +98,11 @@ async def load_subscribers() -> list:
     val = await sb_get("subscribers")
     return val if val else []
 
-async def save_subscribers(subscribers: list):
-    await sb_set("subscribers", subscribers)
-
 async def add_subscriber(user_id: int):
     subscribers = await load_subscribers()
     if user_id not in subscribers:
         subscribers.append(user_id)
-        await save_subscribers(subscribers)
+        await sb_set("subscribers", subscribers)
 
 async def load_admins() -> dict:
     val = await sb_get("admins")
@@ -1025,19 +1021,16 @@ async def send_series_first(message: Message, code: str, s: dict):
         await message.answer("❌ Serial qismlari topilmadi.")
         return
     ep = episodes[0]
+    kb = build_episode_keyboard(code, total, 0) if total > 1 else None
     caption = f"📺 <b>{title}</b>\n🎞 <b>1ep</b>"
     try:
         if ep["type"] == "document":
-            await message.answer_document(ep["file_id"], caption=caption, protect_content=True)
+            await message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
         else:
-            await message.answer_video(ep["file_id"], caption=caption, protect_content=True)
+            await message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
     except Exception as e:
         print(f"[XATO] 1-qism: {e}")
         await message.answer("❌ Serial yuborishda xato.")
-        return
-    if total > 1:
-        kb = build_episode_keyboard(code, total, 0)
-        await message.answer("📺", reply_markup=kb)
 
 @dp.message(UserFSM.waiting_for_movie_code, F.text)
 async def user_enter_code(message: Message, state: FSMContext):
