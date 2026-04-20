@@ -328,7 +328,10 @@ async def episode_page_cb(callback: types.CallbackQuery):
     start = page * EP_PER_PAGE + 1
     end = min(start + EP_PER_PAGE - 1, total)
     kb = build_episode_keyboard(code, total, page)
-    await callback.message.edit_text("📺", reply_markup=kb)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
     await callback.answer()
 
 @dp.callback_query(F.data == "noop")
