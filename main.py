@@ -33,33 +33,31 @@ EP_PER_PAGE = 10
 # ============================================================
 async def sb_get(key: str):
     """Supabase dan qiymat olish"""
-    async with httpx.AsyncClient() as client:
-        r = await client.get(
-            f"{SUPABASE_URL}/rest/v1/storage",
-            params={"key": f"eq.{key}", "select": "value"},
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}"
-            }
-        )
-        data = r.json()
-        if data:
-            return data[0]["value"]
-        return None
+    r = await http_client.get(
+        f"{SUPABASE_URL}/rest/v1/storage",
+        params={"key": f"eq.{key}", "select": "value"},
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}"
+        }
+    )
+    data = r.json()
+    if data:
+        return data[0]["value"]
+    return None
 
 async def sb_set(key: str, value):
     """Supabase ga qiymat saqlash"""
-    async with httpx.AsyncClient() as client:
-        await client.post(
-            f"{SUPABASE_URL}/rest/v1/storage",
-            json={"key": key, "value": value},
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates"
-            }
-        )
+    await http_client.post(
+        f"{SUPABASE_URL}/rest/v1/storage",
+        json={"key": key, "value": value},
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+        }
+    )
 
 # ============================================================
 # MA'LUMOT YUKLASH / SAQLASH
@@ -135,6 +133,9 @@ async def track_user(user_id: int):
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
+
+# Global HTTP client — RAM tejash uchun
+http_client = httpx.AsyncClient(timeout=10)
 
 # ============================================================
 # ADMIN KLAVIATURASI
@@ -329,10 +330,7 @@ async def episode_page_cb(callback: types.CallbackQuery):
     start = page * EP_PER_PAGE + 1
     end = min(start + EP_PER_PAGE - 1, total)
     kb = build_episode_keyboard(code, total, page)
-    await callback.message.edit_text(
-        f"📺 <b>{title}</b> — {total} ta qism:",
-        reply_markup=kb
-    )
+    await callback.message.edit_text("📺", reply_markup=kb)
     await callback.answer()
 
 @dp.callback_query(F.data == "noop")
@@ -1039,10 +1037,7 @@ async def send_series_first(message: Message, code: str, s: dict):
         return
     if total > 1:
         kb = build_episode_keyboard(code, total, 0)
-        await message.answer(
-            f"📺 <b>{title}</b> — {total} ta qism:",
-            reply_markup=kb
-        )
+        await message.answer("📺", reply_markup=kb)
 
 @dp.message(UserFSM.waiting_for_movie_code, F.text)
 async def user_enter_code(message: Message, state: FSMContext):
@@ -1137,7 +1132,10 @@ async def main():
     print(f"💾 Obunachlar: {len(subscribers)} ta")
     print("=" * 40)
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await http_client.aclose()
 
 if __name__ == "__main__":
     asyncio.run(main())
