@@ -216,7 +216,7 @@ def build_episode_keyboard(code: str, total: int, page: int, active: int = 0) ->
     buttons = []
     row = []
     for i in range(start, end + 1):
-        label = f"▶️ {i}" if i == active else f"{i}"
+        label = f"📀 - {i}" if i == active else f"{i}"
         row.append(InlineKeyboardButton(text=label, callback_data=f"ep_{code}_{i}"))
         if len(row) == 5:
             buttons.append(row)
@@ -369,21 +369,15 @@ async def send_episode(callback: types.CallbackQuery):
     ep = episodes[idx]
     total = len(episodes)
     page = (ep_num - 1) // EP_PER_PAGE
-    # Update previous message keyboard to highlight selected episode
-    kb_active = build_episode_keyboard(code, total, page, active=ep_num)
-    try:
-        await callback.message.edit_reply_markup(reply_markup=kb_active)
-    except Exception:
-        pass
-    # Send new episode with keyboard (no active highlight)
-    kb_new = build_episode_keyboard(code, total, page)
+    # Yangi xabarda bosilgan qism belgilanadi
+    kb = build_episode_keyboard(code, total, page, active=ep_num)
     caption = f"<b>{s['title']}</b>\n<b>{ep_num}-qism</b>"
     await callback.answer()
     try:
         if ep["type"] == "document":
-            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb_new)
+            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
         else:
-            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb_new)
+            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
     except Exception as e:
         print(f"[XATO] Qism: {e}")
         await callback.message.answer("❌ Qismni yuborishda xato.")
