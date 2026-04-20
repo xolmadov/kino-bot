@@ -373,6 +373,11 @@ async def send_episode(callback: types.CallbackQuery):
     kb = build_episode_keyboard(code, total, page, active=ep_num)
     caption = f"<b>{s['title']}</b>\n<b>{ep_num}-qism</b>"
     await callback.answer()
+    # Avvalgi xabardan tugmalarni o'chirish
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
     try:
         if ep["type"] == "document":
             await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
