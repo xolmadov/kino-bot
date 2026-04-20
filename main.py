@@ -219,8 +219,8 @@ def build_episode_keyboard(code: str, total: int, page: int) -> InlineKeyboardMa
     buttons = []
     row = []
     for i in range(start, end + 1):
-        row.append(InlineKeyboardButton(text=f"{i}-qism", callback_data=f"ep_{code}_{i}"))
-        if len(row) == 4:
+        row.append(InlineKeyboardButton(text=f"{i}ep", callback_data=f"ep_{code}_{i}"))
+        if len(row) == 5:
             buttons.append(row)
             row = []
     if row:
@@ -330,8 +330,7 @@ async def episode_page_cb(callback: types.CallbackQuery):
     end = min(start + EP_PER_PAGE - 1, total)
     kb = build_episode_keyboard(code, total, page)
     await callback.message.edit_text(
-        f"📺 <b>{title}</b> — barcha qismlar ({total} ta)\n"
-        f"📄 Sahifa {page + 1}/{total_pages} ({start}-{end} qismlar):",
+        f"📺 <b>{title}</b> — {total} ta qism:",
         reply_markup=kb
     )
     await callback.answer()
@@ -1028,7 +1027,7 @@ async def send_series_first(message: Message, code: str, s: dict):
         await message.answer("❌ Serial qismlari topilmadi.")
         return
     ep = episodes[0]
-    caption = f"📺 <b>{title}</b>\n🎞 <b>1-qism</b>"
+    caption = f"📺 <b>{title}</b>\n🎞 <b>1ep</b>"
     try:
         if ep["type"] == "document":
             await message.answer_document(ep["file_id"], caption=caption, protect_content=True)
@@ -1040,11 +1039,8 @@ async def send_series_first(message: Message, code: str, s: dict):
         return
     if total > 1:
         kb = build_episode_keyboard(code, total, 0)
-        total_pages = (total + EP_PER_PAGE - 1) // EP_PER_PAGE
-        end_first = min(EP_PER_PAGE, total)
         await message.answer(
-            f"📺 <b>{title}</b> — barcha qismlar ({total} ta)\n"
-            f"📄 Sahifa 1/{total_pages} (1-{end_first} qismlar):",
+            f"📺 <b>{title}</b> — {total} ta qism:",
             reply_markup=kb
         )
 
