@@ -310,10 +310,12 @@ async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
 # ============================================================
 @dp.callback_query(F.data.startswith("eppage_"))
 async def episode_page_cb(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    code = parts[1]
+    # format: eppage_CODE_PAGE — page always last
+    data = callback.data[len("eppage_"):]
     try:
-        page = int(parts[2])
+        last_sep = data.rfind("_")
+        code = data[:last_sep]
+        page = int(data[last_sep + 1:])
     except (ValueError, IndexError):
         return
     series = await load_series()
@@ -338,10 +340,12 @@ async def noop_cb(callback: types.CallbackQuery):
 # ============================================================
 @dp.callback_query(F.data.startswith("ep_"))
 async def send_episode(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    code = parts[1]
+    # format: ep_CODE_EPNUM — epnum always last
+    data = callback.data[len("ep_"):]
     try:
-        ep_num = int(parts[2])
+        last_sep = data.rfind("_")
+        code = data[:last_sep]
+        ep_num = int(data[last_sep + 1:])
     except (ValueError, IndexError):
         return
     not_sub = await check_subscriptions(callback.from_user.id)
