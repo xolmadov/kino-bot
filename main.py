@@ -61,18 +61,48 @@ async def sb_set(key: str, value):
 # ============================================================
 # MA'LUMOT YUKLASH / SAQLASH
 # ============================================================
+# RAM CACHE — Supabase ga kam murojaat qilish uchun
+import time
+_cache: dict = {}
+CACHE_TTL = 120  # 2 daqiqada bir yangilanadi
+
+def _cache_get(key: str):
+    entry = _cache.get(key)
+    if entry and time.time() - entry["ts"] < CACHE_TTL:
+        return entry["val"]
+    return None
+
+def _cache_set(key: str, val):
+    _cache[key] = {"val": val, "ts": time.time()}
+
+def _cache_del(key: str):
+    _cache.pop(key, None)
+
+# ============================================================
 async def load_data() -> dict:
+    cached = _cache_get("movies")
+    if cached is not None:
+        return cached
     val = await sb_get("movies")
-    return val if val else {}
+    result = val if val else {}
+    _cache_set("movies", result)
+    return result
 
 async def save_data(data: dict):
+    _cache_set("movies", data)
     await sb_set("movies", data)
 
 async def load_series() -> dict:
+    cached = _cache_get("series")
+    if cached is not None:
+        return cached
     val = await sb_get("series")
-    return val if val else {}
+    result = val if val else {}
+    _cache_set("series", result)
+    return result
 
 async def save_series(data: dict):
+    _cache_set("series", data)
     await sb_set("series", data)
 
 async def load_stats() -> dict:
@@ -83,15 +113,20 @@ async def save_stats(stats: dict):
     await sb_set("stats", stats)
 
 async def load_channels() -> list:
+    cached = _cache_get("channels")
+    if cached is not None:
+        return cached
     val = await sb_get("channels")
     saved = val if val else []
     all_ch = list(CHANNELS)
     for ch in saved:
         if not any(c["id"] == ch["id"] for c in all_ch):
             all_ch.append(ch)
+    _cache_set("channels", all_ch)
     return all_ch
 
 async def save_channels(channels: list):
+    _cache_del("channels")
     await sb_set("channels", channels)
 
 async def load_subscribers() -> list:
@@ -105,10 +140,16 @@ async def add_subscriber(user_id: int):
         await sb_set("subscribers", subscribers)
 
 async def load_admins() -> dict:
+    cached = _cache_get("admins")
+    if cached is not None:
+        return cached
     val = await sb_get("admins")
-    return val if val else {}
+    result = val if val else {}
+    _cache_set("admins", result)
+    return result
 
 async def save_admins(admins: dict):
+    _cache_set("admins", admins)
     await sb_set("admins", admins)
 
 async def is_admin(user_id: int) -> bool:
@@ -117,7 +158,14 @@ async def is_admin(user_id: int) -> bool:
     admins = await load_admins()
     return str(user_id) in admins
 
+# Foydalanuvchilarni RAM da saqlash — Supabase ga kamroq yozish
+_known_users: set = set()
+
 async def track_user(user_id: int):
+    # Agar allaqachon ko'rilgan user bo'lsa, Supabase ga yozmaymiz
+    if user_id in _known_users:
+        return
+    _known_users.add(user_id)
     stats = await load_stats()
     if user_id not in stats["users"]:
         stats["users"].append(user_id)
@@ -131,7 +179,7 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
 # Global HTTP client — RAM tejash uchun
-http_client = httpx.AsyncClient(timeout=10)
+http_client = httpx.AsyncClient(timeout=7, limits=httpx.Limits(max_connections=10, max_keepalive_connections=5))
 
 # ============================================================
 # ADMIN KLAVIATURASI
@@ -179,10 +227,17 @@ class UserFSM(StatesGroup):
 # ============================================================
 # KANAL TEKSHIRUVI
 # ============================================================
+_sub_cache: dict = {}
+SUB_CACHE_TTL = 120  # 2 daqiqa — har tekshiruvda Telegram API ga urmaslik uchun
+
 async def check_subscriptions(user_id: int) -> list:
     channels = await load_channels()
     if not channels:
         return []
+    # Cache tekshirish
+    cached = _sub_cache.get(user_id)
+    if cached and time.time() - cached["ts"] < SUB_CACHE_TTL:
+        return cached["val"]
     not_sub = []
     for ch in channels:
         try:
@@ -192,6 +247,7 @@ async def check_subscriptions(user_id: int) -> list:
         except Exception as e:
             print(f"[XATO] Kanal {ch['id']}: {e}")
             not_sub.append(ch)
+    _sub_cache[user_id] = {"val": not_sub, "ts": time.time()}
     return not_sub
 
 async def show_subscribe_message(message: Message, not_sub: list):
@@ -373,11 +429,6 @@ async def send_episode(callback: types.CallbackQuery):
     kb = build_episode_keyboard(code, total, page, active=ep_num)
     caption = f"<b>{s['title']}</b>\n<b>{ep_num}-qism</b>"
     await callback.answer()
-    # Avvalgi xabardan tugmalarni o'chirish
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
     try:
         if ep["type"] == "document":
             await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
