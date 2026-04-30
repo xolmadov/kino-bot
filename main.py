@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -18,7 +19,7 @@ from aiogram.client.default import DefaultBotProperties
 # ============================================================
 # SOZLAMALAR
 # ============================================================
-TOKEN = os.getenv("BOT_TOKEN", "8610997909:AAE43YuVZDWbK-3NsrcAXVdS_dac7FuHeRU")
+TOKEN = os.getenv("BOT_TOKEN", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
@@ -28,43 +29,18 @@ CHANNELS = []
 EP_PER_PAGE = 10
 
 # ============================================================
-# SUPABASE YORDAMCHI FUNKSIYALAR
+# GLOBAL HTTP CLIENT — bitta, minimal sozlamalar
 # ============================================================
-async def sb_get(key: str):
-    """Supabase dan qiymat olish"""
-    r = await http_client.get(
-        f"{SUPABASE_URL}/rest/v1/storage",
-        params={"key": f"eq.{key}", "select": "value"},
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}"
-        }
-    )
-    data = r.json()
-    if data:
-        return data[0]["value"]
-    return None
-
-async def sb_set(key: str, value):
-    """Supabase ga qiymat saqlash"""
-    await http_client.post(
-        f"{SUPABASE_URL}/rest/v1/storage",
-        json={"key": key, "value": value},
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates"
-        }
-    )
+http_client = httpx.AsyncClient(
+    timeout=7,
+    limits=httpx.Limits(max_connections=5, max_keepalive_connections=3)
+)
 
 # ============================================================
-# MA'LUMOT YUKLASH / SAQLASH
+# KESH TIZIMI — Barcha ma'lumotlar RAM da saqlanadi
 # ============================================================
-# RAM CACHE — Supabase ga kam murojaat qilish uchun
-import time
 _cache: dict = {}
-CACHE_TTL = 120  # 2 daqiqada bir yangilanadi
+CACHE_TTL = 300  # 5 daqiqa (avval 2 daqiqa edi — Supabase ga kamroq murojaat)
 
 def _cache_get(key: str):
     entry = _cache.get(key)
@@ -78,6 +54,39 @@ def _cache_set(key: str, val):
 def _cache_del(key: str):
     _cache.pop(key, None)
 
+# ============================================================
+# SUPABASE — Minimal HTTP so'rovlar
+# ============================================================
+async def sb_get(key: str):
+    try:
+        r = await http_client.get(
+            f"{SUPABASE_URL}/rest/v1/storage",
+            params={"key": f"eq.{key}", "select": "value"},
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+        )
+        data = r.json()
+        return data[0]["value"] if data else None
+    except Exception as e:
+        print(f"[sb_get xato] {key}: {e}")
+        return None
+
+async def sb_set(key: str, value):
+    try:
+        await http_client.post(
+            f"{SUPABASE_URL}/rest/v1/storage",
+            json={"key": key, "value": value},
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            }
+        )
+    except Exception as e:
+        print(f"[sb_set xato] {key}: {e}")
+
+# ============================================================
+# MA'LUMOT YUKLASH / SAQLASH — Kesh bilan
 # ============================================================
 async def load_data() -> dict:
     cached = _cache_get("movies")
@@ -105,13 +114,6 @@ async def save_series(data: dict):
     _cache_set("series", data)
     await sb_set("series", data)
 
-async def load_stats() -> dict:
-    val = await sb_get("stats")
-    return val if val else {"users": [], "requests": 0}
-
-async def save_stats(stats: dict):
-    await sb_set("stats", stats)
-
 async def load_channels() -> list:
     cached = _cache_get("channels")
     if cached is not None:
@@ -128,16 +130,6 @@ async def load_channels() -> list:
 async def save_channels(channels: list):
     _cache_del("channels")
     await sb_set("channels", channels)
-
-async def load_subscribers() -> list:
-    val = await sb_get("subscribers")
-    return val if val else []
-
-async def add_subscriber(user_id: int):
-    subscribers = await load_subscribers()
-    if user_id not in subscribers:
-        subscribers.append(user_id)
-        await sb_set("subscribers", subscribers)
 
 async def load_admins() -> dict:
     cached = _cache_get("admins")
@@ -158,28 +150,58 @@ async def is_admin(user_id: int) -> bool:
     admins = await load_admins()
     return str(user_id) in admins
 
-# Foydalanuvchilarni RAM da saqlash — Supabase ga kamroq yozish
+# ============================================================
+# FOYDALANUVCHI TRACKING — Minimal Supabase yozuvi
+# ✅ OPTIMIZATSIYA: stats va subscribers bitta obyektda saqlanadi
+# ============================================================
 _known_users: set = set()
 
+async def load_user_data() -> dict:
+    """Stats va subscribers bitta so'rovda olinadi"""
+    cached = _cache_get("user_data")
+    if cached is not None:
+        return cached
+    val = await sb_get("user_data")
+    result = val if val else {"users": [], "requests": 0}
+    _cache_set("user_data", result)
+    return result
+
+async def save_user_data(data: dict):
+    _cache_set("user_data", data)
+    await sb_set("user_data", data)
+
 async def track_user(user_id: int):
-    # Agar allaqachon ko'rilgan user bo'lsa, Supabase ga yozmaymiz
+    """Foydalanuvchini kuzatish — Supabase ga faqat yangi userlar uchun yoziladi"""
     if user_id in _known_users:
-        return
+        return  # Allaqachon ko'rilgan — hech narsa qilma
     _known_users.add(user_id)
-    stats = await load_stats()
-    if user_id not in stats["users"]:
-        stats["users"].append(user_id)
-    stats["requests"] = stats.get("requests", 0) + 1
-    await save_stats(stats)
-    await add_subscriber(user_id)
+    user_data = await load_user_data()
+    changed = False
+    if user_id not in user_data["users"]:
+        user_data["users"].append(user_id)
+        changed = True
+    user_data["requests"] = user_data.get("requests", 0) + 1
+    if changed:
+        await save_user_data(user_data)
+    # Agar faqat request soni oshsa, 10 tadan keyin saqlash (kam yozuv)
+    elif user_data["requests"] % 10 == 0:
+        await save_user_data(user_data)
+
+async def load_subscribers() -> list:
+    """Subscribers endi user_data ichida"""
+    user_data = await load_user_data()
+    return user_data.get("users", [])
+
+async def load_stats() -> dict:
+    """Stats endi user_data dan olinadi"""
+    user_data = await load_user_data()
+    return {"users": user_data.get("users", []), "requests": user_data.get("requests", 0)}
 
 # ============================================================
-
+# BOT VA DISPATCHER
+# ============================================================
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
-
-# Global HTTP client — RAM tejash uchun
-http_client = httpx.AsyncClient(timeout=7, limits=httpx.Limits(max_connections=10, max_keepalive_connections=5))
 
 # ============================================================
 # ADMIN KLAVIATURASI
@@ -225,16 +247,15 @@ class UserFSM(StatesGroup):
     waiting_for_movie_code = State()
 
 # ============================================================
-# KANAL TEKSHIRUVI
+# KANAL TEKSHIRUVI — Kesh bilan (TTL 3 daqiqa)
 # ============================================================
 _sub_cache: dict = {}
-SUB_CACHE_TTL = 120  # 2 daqiqa — har tekshiruvda Telegram API ga urmaslik uchun
+SUB_CACHE_TTL = 180  # 3 daqiqa
 
 async def check_subscriptions(user_id: int) -> list:
     channels = await load_channels()
     if not channels:
         return []
-    # Cache tekshirish
     cached = _sub_cache.get(user_id)
     if cached and time.time() - cached["ts"] < SUB_CACHE_TTL:
         return cached["val"]
@@ -317,20 +338,17 @@ async def start_cmd(message: Message, state: FSMContext):
     user_id = message.from_user.id
     if await is_admin(user_id):
         cur = await state.get_state()
-        admin_active_states = [
-            str(AdminFSM.idle), str(AdminFSM.waiting_for_video), str(AdminFSM.waiting_for_title),
-            str(AdminFSM.waiting_for_code), str(AdminFSM.waiting_for_delete),
-            str(AdminFSM.waiting_for_series_title), str(AdminFSM.waiting_for_series_code),
-            str(AdminFSM.waiting_for_series_count), str(AdminFSM.waiting_for_episode),
-            str(AdminFSM.waiting_for_add_ep_code), str(AdminFSM.waiting_for_add_ep_count),
-            str(AdminFSM.waiting_for_add_ep_file), str(AdminFSM.waiting_for_channel),
-            str(AdminFSM.waiting_for_broadcast), str(AdminFSM.waiting_for_new_admin_id),
-        ]
+        admin_active_states = [str(s) for s in [
+            AdminFSM.idle, AdminFSM.waiting_for_video, AdminFSM.waiting_for_title,
+            AdminFSM.waiting_for_code, AdminFSM.waiting_for_delete,
+            AdminFSM.waiting_for_series_title, AdminFSM.waiting_for_series_code,
+            AdminFSM.waiting_for_series_count, AdminFSM.waiting_for_episode,
+            AdminFSM.waiting_for_add_ep_code, AdminFSM.waiting_for_add_ep_count,
+            AdminFSM.waiting_for_add_ep_file, AdminFSM.waiting_for_channel,
+            AdminFSM.waiting_for_broadcast, AdminFSM.waiting_for_new_admin_id,
+        ]]
         if cur not in admin_active_states:
-            await message.answer(
-                "🔐 <b>Admin paneliga xush kelibsiz!</b>\n\nParolni kiriting:",
-                reply_markup=ReplyKeyboardRemove()
-            )
+            await message.answer("🔐 <b>Admin paneliga xush kelibsiz!</b>\n\nParolni kiriting:", reply_markup=ReplyKeyboardRemove())
             await state.set_state(AdminFSM.waiting_for_password)
         else:
             await message.answer("✅ Admin sifatida kirgansiz.", reply_markup=get_admin_keyboard(user_id))
@@ -340,10 +358,7 @@ async def start_cmd(message: Message, state: FSMContext):
     if not_sub:
         await show_subscribe_message(message, not_sub)
     else:
-        await message.answer(
-            "🎬 <b>Kino/Serial botiga xush kelibsiz!</b>\n\n"
-            "🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:"
-        )
+        await message.answer("🎬 <b>Kino/Serial botiga xush kelibsiz!</b>\n\n🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:")
         await state.set_state(UserFSM.waiting_for_movie_code)
 
 # ============================================================
@@ -351,12 +366,11 @@ async def start_cmd(message: Message, state: FSMContext):
 # ============================================================
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
+    # Keshni tozalash — yangi tekshiruv uchun
+    _sub_cache.pop(callback.from_user.id, None)
     not_sub = await check_subscriptions(callback.from_user.id)
     if not not_sub:
-        await callback.message.edit_text(
-            "✅ <b>Obuna tasdiqlandi!</b>\n\n"
-            "🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:"
-        )
+        await callback.message.edit_text("✅ <b>Obuna tasdiqlandi!</b>\n\n🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:")
         await state.set_state(UserFSM.waiting_for_movie_code)
     else:
         names = ", ".join([ch["name"] for ch in not_sub])
@@ -367,7 +381,6 @@ async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
 # ============================================================
 @dp.callback_query(F.data.startswith("eppage_"))
 async def episode_page_cb(callback: types.CallbackQuery):
-    # format: eppage_CODE_PAGE — page always last
     data = callback.data[len("eppage_"):]
     try:
         last_sep = data.rfind("_")
@@ -380,10 +393,6 @@ async def episode_page_cb(callback: types.CallbackQuery):
         await callback.answer("❌ Serial topilmadi!", show_alert=True)
         return
     total = len(series[code].get("episodes", []))
-    title = series[code].get("title", "Serial")
-    total_pages = (total + EP_PER_PAGE - 1) // EP_PER_PAGE
-    start = page * EP_PER_PAGE + 1
-    end = min(start + EP_PER_PAGE - 1, total)
     kb = build_episode_keyboard(code, total, page)
     try:
         await callback.message.edit_reply_markup(reply_markup=kb)
@@ -400,7 +409,6 @@ async def noop_cb(callback: types.CallbackQuery):
 # ============================================================
 @dp.callback_query(F.data.startswith("ep_"))
 async def send_episode(callback: types.CallbackQuery):
-    # format: ep_CODE_EPNUM — epnum always last
     data = callback.data[len("ep_"):]
     try:
         last_sep = data.rfind("_")
@@ -425,7 +433,6 @@ async def send_episode(callback: types.CallbackQuery):
     ep = episodes[idx]
     total = len(episodes)
     page = (ep_num - 1) // EP_PER_PAGE
-    # Yangi xabarda bosilgan qism belgilanadi
     kb = build_episode_keyboard(code, total, page, active=ep_num)
     caption = f"<b>{s['title']}</b>\n<b>{ep_num}-qism</b>"
     await callback.answer()
@@ -458,15 +465,14 @@ async def pick_content(callback: types.CallbackQuery):
             await callback.message.answer("❌ Kino topilmadi.")
             return
         movie = movies[code]
-        file_id = movie["file_id"]
         ftype = movie.get("type", "video")
         title = movie.get("title", "Kino")
         caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
         try:
             if ftype == "document":
-                await callback.message.answer_document(file_id, caption=caption, protect_content=True)
+                await callback.message.answer_document(movie["file_id"], caption=caption, protect_content=True)
             else:
-                await callback.message.answer_video(file_id, caption=caption, protect_content=True)
+                await callback.message.answer_video(movie["file_id"], caption=caption, protect_content=True)
         except Exception:
             await callback.message.answer("❌ Kino yuborishda xato.")
     elif kind == "series":
@@ -544,9 +550,7 @@ async def admin_save_movie(message: Message, state: FSMContext):
     await save_data(all_data)
     uid = message.from_user.id
     await message.answer(
-        f"✅ <b>Kino saqlandi!</b>\n\n"
-        f"🎬 Nomi: <b>{data.get('title')}</b>\n"
-        f"🔑 Kodi: <code>{code}</code>",
+        f"✅ <b>Kino saqlandi!</b>\n\n🎬 Nomi: <b>{data.get('title')}</b>\n🔑 Kodi: <code>{code}</code>",
         reply_markup=get_admin_keyboard(uid)
     )
     await state.set_state(AdminFSM.idle)
@@ -619,18 +623,12 @@ async def admin_receive_episode(message: Message, state: FSMContext):
         await save_series(all_series)
         uid = message.from_user.id
         await message.answer(
-            f"✅ <b>Serial saqlandi!</b>\n\n"
-            f"📺 Nomi: <b>{data['series_title']}</b>\n"
-            f"🔑 Kodi: <code>{code}</code>\n"
-            f"🎞 Qismlar: <b>{len(episodes)} ta</b>",
+            f"✅ <b>Serial saqlandi!</b>\n\n📺 Nomi: <b>{data['series_title']}</b>\n🔑 Kodi: <code>{code}</code>\n🎞 Qismlar: <b>{len(episodes)} ta</b>",
             reply_markup=get_admin_keyboard(uid)
         )
         await state.set_state(AdminFSM.idle)
     else:
-        await message.answer(
-            f"✅ <b>{current}-qism saqlandi!</b>\n\n"
-            f"📤 <b>{current + 1}-qismni yuboring</b> ({current}/{total_to_upload}):"
-        )
+        await message.answer(f"✅ <b>{current}-qism saqlandi!</b>\n\n📤 <b>{current + 1}-qismni yuboring</b> ({current}/{total_to_upload}):")
 
 @dp.message(AdminFSM.waiting_for_episode)
 async def admin_episode_wrong(message: Message, state: FSMContext):
@@ -666,8 +664,7 @@ async def admin_add_ep_code(message: Message, state: FSMContext):
     current_count = len(s.get("episodes", []))
     await state.update_data(add_ep_code=code, add_ep_start_from=current_count + 1)
     await message.answer(
-        f"✅ Serial: <b>{s['title']}</b>\n"
-        f"🎞 Hozirgi qismlar: <b>{current_count} ta</b>\n\n"
+        f"✅ Serial: <b>{s['title']}</b>\n🎞 Hozirgi qismlar: <b>{current_count} ta</b>\n\n"
         "🔢 <b>Nechta yangi qism qo'shmoqchisiz?</b> (1-100):"
     )
     await state.set_state(AdminFSM.waiting_for_add_ep_count)
@@ -708,17 +705,13 @@ async def admin_add_ep_file(message: Message, state: FSMContext):
         await save_series(series)
         uid = message.from_user.id
         await message.answer(
-            f"✅ <b>Qismlar qo'shildi!</b>\n\n"
-            f"📺 Serial: <b>{series[code]['title']}</b>\n"
+            f"✅ <b>Qismlar qo'shildi!</b>\n\n📺 Serial: <b>{series[code]['title']}</b>\n"
             f"🎞 Jami: <b>{total_now} ta</b> | ➕ Qo'shildi: <b>{total} ta</b>",
             reply_markup=get_admin_keyboard(uid)
         )
         await state.set_state(AdminFSM.idle)
     else:
-        await message.answer(
-            f"✅ <b>{current_num}-qism saqlandi!</b>\n\n"
-            f"📤 <b>{current_num + 1}-qismni yuboring</b> ({uploaded}/{total}):"
-        )
+        await message.answer(f"✅ <b>{current_num}-qism saqlandi!</b>\n\n📤 <b>{current_num + 1}-qismni yuboring</b> ({uploaded}/{total}):")
 
 @dp.message(AdminFSM.waiting_for_add_ep_file)
 async def admin_add_ep_wrong(message: Message, state: FSMContext):
@@ -807,8 +800,7 @@ async def admin_add_channel(message: Message, state: FSMContext):
     await message.answer(
         "📢 <b>Kanal ma'lumotlarini kiriting:</b>\n\n"
         "Format:\n<code>-1001234567890 | https://t.me/kanal | Kanal nomi</code>\n\n"
-        "⚠️ Botni kanalga <b>admin</b> qilib qo'ying!\n"
-        "🆔 ID topish: @username_to_id_bot",
+        "⚠️ Botni kanalga <b>admin</b> qilib qo'ying!\n🆔 ID topish: @username_to_id_bot",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(AdminFSM.waiting_for_channel)
@@ -826,10 +818,7 @@ async def admin_save_channel(message: Message, state: FSMContext):
         if not ch_link.startswith("https://"):
             raise ValueError()
     except Exception:
-        await message.answer(
-            "❌ Noto'g'ri format!\n\n"
-            "To'g'ri format:\n<code>-1001234567890 | https://t.me/kanal | Kanal nomi</code>"
-        )
+        await message.answer("❌ Noto'g'ri format!\n\nTo'g'ri format:\n<code>-1001234567890 | https://t.me/kanal | Kanal nomi</code>")
         return
     channels = await load_channels()
     if len(channels) >= 10:
@@ -843,10 +832,7 @@ async def admin_save_channel(message: Message, state: FSMContext):
     channels.append({"id": ch_id, "link": ch_link, "name": ch_name})
     await save_channels(channels)
     await message.answer(
-        f"✅ <b>Kanal qo'shildi!</b>\n\n"
-        f"📢 Nomi: <b>{ch_name}</b>\n"
-        f"🆔 ID: <code>{ch_id}</code>\n"
-        f"📋 Jami: {len(channels)}/10",
+        f"✅ <b>Kanal qo'shildi!</b>\n\n📢 Nomi: <b>{ch_name}</b>\n🆔 ID: <code>{ch_id}</code>\n📋 Jami: {len(channels)}/10",
         reply_markup=get_admin_keyboard(uid)
     )
     await state.set_state(AdminFSM.idle)
@@ -896,7 +882,7 @@ async def statistika(message: Message):
         f"🎬 Kinolar: <b>{len(movies)}</b>\n"
         f"📺 Seriallar: <b>{len(series)}</b>\n"
         f"👤 Foydalanuvchilar: <b>{len(stats.get('users', []))}</b>\n"
-        f"💾 Doimiy obunachlar: <b>{len(subscribers)}</b>\n"
+        f"💾 Obunachlar: <b>{len(subscribers)}</b>\n"
         f"📥 Jami so'rovlar: <b>{stats.get('requests', 0)}</b>\n"
         f"📢 Kanallar: <b>{len(channels)}/10</b>\n"
         f"🔧 Adminlar: <b>{len(admins)}</b> (+ 1 owner)"
@@ -911,8 +897,7 @@ async def admin_broadcast_start(message: Message, state: FSMContext):
         return
     subscribers = await load_subscribers()
     await message.answer(
-        f"📣 <b>Ommaviy xabar</b>\n"
-        f"💾 Doimiy obunachlar: <b>{len(subscribers)}</b>\n\n"
+        f"📣 <b>Ommaviy xabar</b>\n💾 Obunachlar: <b>{len(subscribers)}</b>\n\n"
         "Xabarni kiriting (/cancel — bekor qilish):",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -960,10 +945,8 @@ async def owner_add_admin(message: Message, state: FSMContext):
     if message.from_user.id != OWNER_ID:
         return
     await message.answer(
-        "👑 <b>Yangi admin qo'shish</b>\n\n"
-        "Admin bo'lajak odamning <b>Telegram ID</b>sini kiriting:\n\n"
-        "💡 ID topish: @userinfobot ga /start yuboring\n\n"
-        "/cancel — bekor qilish",
+        "👑 <b>Yangi admin qo'shish</b>\n\nAdmin bo'lajak odamning <b>Telegram ID</b>sini kiriting:\n\n"
+        "💡 ID topish: @userinfobot ga /start yuboring\n\n/cancel — bekor qilish",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(AdminFSM.waiting_for_new_admin_id)
@@ -985,7 +968,7 @@ async def owner_save_admin(message: Message, state: FSMContext):
         return
     admins = await load_admins()
     if str(new_admin_id) in admins:
-        name = admins[str(new_admin_id)].get('name', 'Noma\'lum')
+        name = admins[str(new_admin_id)].get('name', "Noma'lum")
         await message.answer(f"⚠️ Bu foydalanuvchi allaqachon admin!\n👤 Ismi: {name}", reply_markup=get_admin_keyboard(OWNER_ID))
         await state.set_state(AdminFSM.idle)
         return
@@ -1003,10 +986,7 @@ async def owner_save_admin(message: Message, state: FSMContext):
     except Exception:
         pass
     await message.answer(
-        f"✅ <b>Yangi admin qo'shildi!</b>\n\n"
-        f"👤 Ismi: <b>{name}</b>\n"
-        f"🆔 ID: <code>{new_admin_id}</code>\n"
-        f"📱 Username: {username}",
+        f"✅ <b>Yangi admin qo'shildi!</b>\n\n👤 Ismi: <b>{name}</b>\n🆔 ID: <code>{new_admin_id}</code>\n📱 Username: {username}",
         reply_markup=get_admin_keyboard(OWNER_ID)
     )
     await state.set_state(AdminFSM.idle)
@@ -1026,12 +1006,12 @@ async def owner_admins_list(message: Message):
         await message.answer(text)
         return
     for uid, info in admins.items():
-        name = info.get('name', 'Noma\'lum')
-        uname = info.get('username', 'noma\'lum')
+        name = info.get('name', "Noma'lum")
+        uname = info.get('username', "noma'lum")
         text += f"🔧 <b>{name}</b>\n   🆔 <code>{uid}</code>\n   📱 {uname}\n\n"
     buttons = []
     for uid, info in admins.items():
-        name = info.get('name', 'Noma\'lum')
+        name = info.get('name', "Noma'lum")
         buttons.append([InlineKeyboardButton(text=f"🗑 {name} o'chirish", callback_data=f"del_admin_{uid}")])
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
@@ -1079,7 +1059,7 @@ async def stats_cmd(message: Message):
     )
 
 # ============================================================
-# FOYDALANUVCHI — KOD YOKI NOM
+# FOYDALANUVCHI — SERIAL YUBORISH
 # ============================================================
 async def send_series_first(message: Message, code: str, s: dict):
     title = s.get("title", "Serial")
@@ -1100,6 +1080,9 @@ async def send_series_first(message: Message, code: str, s: dict):
         print(f"[XATO] 1-qism: {e}")
         await message.answer("❌ Serial yuborishda xato.")
 
+# ============================================================
+# FOYDALANUVCHI — KOD YOKI NOM
+# ============================================================
 @dp.message(UserFSM.waiting_for_movie_code, F.text)
 async def user_enter_code(message: Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1114,15 +1097,14 @@ async def user_enter_code(message: Message, state: FSMContext):
     series = await load_series()
     if code in movies:
         movie = movies[code]
-        file_id = movie["file_id"]
         ftype = movie.get("type", "video")
         title = movie.get("title", "Kino")
         caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
         try:
             if ftype == "document":
-                await message.answer_document(file_id, caption=caption, protect_content=True)
+                await message.answer_document(movie["file_id"], caption=caption, protect_content=True)
             else:
-                await message.answer_video(file_id, caption=caption, protect_content=True)
+                await message.answer_video(movie["file_id"], caption=caption, protect_content=True)
         except Exception:
             await message.answer("❌ Kino yuborishda xato.")
         return
@@ -1137,15 +1119,14 @@ async def user_enter_code(message: Message, state: FSMContext):
         r = results[0]
         if r["kind"] == "movie":
             movie = movies[r["code"]]
-            file_id = movie["file_id"]
             ftype = movie.get("type", "video")
             title = movie.get("title", "Kino")
             caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
             try:
                 if ftype == "document":
-                    await message.answer_document(file_id, caption=caption, protect_content=True)
+                    await message.answer_document(movie["file_id"], caption=caption, protect_content=True)
                 else:
-                    await message.answer_video(file_id, caption=caption, protect_content=True)
+                    await message.answer_video(movie["file_id"], caption=caption, protect_content=True)
             except Exception:
                 await message.answer("❌ Kino yuborishda xato.")
         else:
@@ -1184,7 +1165,7 @@ async def handle_text(message: Message, state: FSMContext):
 # ============================================================
 async def main():
     print("=" * 40)
-    print("🚀 Bot ishga tushdi! (Supabase rejimi)")
+    print("🚀 Bot ishga tushdi! (Optimized)")
     print(f"👑 Owner ID: {OWNER_ID}")
     movies = await load_data()
     series = await load_series()
