@@ -358,16 +358,10 @@ async def start_cmd(message: Message, state: FSMContext):
 
     if await is_admin(user_id):
         cur = await state.get_state()
-        admin_active_states = [str(s) for s in [
-            AdminFSM.idle, AdminFSM.waiting_for_video, AdminFSM.waiting_for_title,
-            AdminFSM.waiting_for_code, AdminFSM.waiting_for_delete,
-            AdminFSM.waiting_for_series_title, AdminFSM.waiting_for_series_code,
-            AdminFSM.waiting_for_series_count, AdminFSM.waiting_for_episode,
-            AdminFSM.waiting_for_add_ep_code, AdminFSM.waiting_for_add_ep_count,
-            AdminFSM.waiting_for_add_ep_file, AdminFSM.waiting_for_channel,
-            AdminFSM.waiting_for_broadcast, AdminFSM.waiting_for_new_admin_id,
-        ]]
-        if cur not in admin_active_states:
+        # state None bo'lsa — parol so'ra (bot restart bo'lgan)
+        # waiting_for_password bo'lsa — parol so'ra
+        # Boshqa state bo'lsa — allaqachon kirgan, menyu ko'rsat
+        if cur is None or cur == str(AdminFSM.waiting_for_password):
             await message.answer("🔐 <b>Admin paneliga xush kelibsiz!</b>\n\nParolni kiriting:", reply_markup=ReplyKeyboardRemove())
             await state.set_state(AdminFSM.waiting_for_password)
         else:
