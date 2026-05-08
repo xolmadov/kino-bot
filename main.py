@@ -1,6 +1,8 @@
 import asyncio
 import os
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -15,6 +17,24 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
+
+# ============================================================
+# RENDER UCHUN PORT SERVER
+# ============================================================
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot ishlayapti!")
+    def log_message(self, *args):
+        pass
+
+def run_http_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
+
+threading.Thread(target=run_http_server, daemon=True).start()
 
 # ============================================================
 # SOZLAMALAR
@@ -152,12 +172,10 @@ async def is_admin(user_id: int) -> bool:
 
 # ============================================================
 # FOYDALANUVCHI TRACKING — Minimal Supabase yozuvi
-# ✅ OPTIMIZATSIYA: stats va subscribers bitta obyektda saqlanadi
 # ============================================================
 _known_users: set = set()
 
 async def load_user_data() -> dict:
-    """Stats va subscribers bitta so'rovda olinadi"""
     cached = _cache_get("user_data")
     if cached is not None:
         return cached
@@ -171,9 +189,8 @@ async def save_user_data(data: dict):
     await sb_set("user_data", data)
 
 async def track_user(user_id: int):
-    """Foydalanuvchini kuzatish — Supabase ga faqat yangi userlar uchun yoziladi"""
     if user_id in _known_users:
-        return  # Allaqachon ko'rilgan — hech narsa qilma
+        return
     _known_users.add(user_id)
     user_data = await load_user_data()
     changed = False
@@ -183,17 +200,14 @@ async def track_user(user_id: int):
     user_data["requests"] = user_data.get("requests", 0) + 1
     if changed:
         await save_user_data(user_data)
-    # Agar faqat request soni oshsa, 10 tadan keyin saqlash (kam yozuv)
     elif user_data["requests"] % 10 == 0:
         await save_user_data(user_data)
 
 async def load_subscribers() -> list:
-    """Subscribers endi user_data ichida"""
     user_data = await load_user_data()
     return user_data.get("users", [])
 
 async def load_stats() -> dict:
-    """Stats endi user_data dan olinadi"""
     user_data = await load_user_data()
     return {"users": user_data.get("users", []), "requests": user_data.get("requests", 0)}
 
@@ -250,7 +264,7 @@ class UserFSM(StatesGroup):
 # KANAL TEKSHIRUVI — Kesh bilan (TTL 3 daqiqa)
 # ============================================================
 _sub_cache: dict = {}
-SUB_CACHE_TTL = 180  # 3 daqiqa
+SUB_CACHE_TTL = 180
 
 async def check_subscriptions(user_id: int) -> list:
     channels = await load_channels()
@@ -366,7 +380,6 @@ async def start_cmd(message: Message, state: FSMContext):
 # ============================================================
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
-    # Keshni tozalash — yangi tekshiruv uchun
     _sub_cache.pop(callback.from_user.id, None)
     not_sub = await check_subscriptions(callback.from_user.id)
     if not not_sub:
