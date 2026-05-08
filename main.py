@@ -346,11 +346,16 @@ async def search_content(query: str) -> list:
     return results
 
 # ============================================================
-# /start
+# /start — deep link ham ishlaydi: /start rezero4
 # ============================================================
-@dp.message(F.text == "/start")
+@dp.message(F.text.startswith("/start"))
 async def start_cmd(message: Message, state: FSMContext):
     user_id = message.from_user.id
+
+    # Deep link kodini olish: "/start rezero4" → "rezero4"
+    parts = message.text.strip().split(maxsplit=1)
+    deep_code = parts[1].strip() if len(parts) > 1 else None
+
     if await is_admin(user_id):
         cur = await state.get_state()
         admin_active_states = [str(s) for s in [
@@ -368,13 +373,46 @@ async def start_cmd(message: Message, state: FSMContext):
         else:
             await message.answer("✅ Admin sifatida kirgansiz.", reply_markup=get_admin_keyboard(user_id))
         return
+
     await track_user(user_id)
+    _sub_cache.pop(user_id, None)
     not_sub = await check_subscriptions(user_id)
+
     if not_sub:
+        # Obuna bo'lmagan — kodni saqlab qo'yamiz, obunadan keyin yuboramiz
+        if deep_code:
+            await state.update_data(pending_code=deep_code)
         await show_subscribe_message(message, not_sub)
-    else:
-        await message.answer("🎬 <b>Kino/Serial botiga xush kelibsiz!</b>\n\n🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:")
-        await state.set_state(UserFSM.waiting_for_movie_code)
+        return
+
+    # Obuna bo'lgan — deep link kodi bormi?
+    if deep_code:
+        movies = await load_data()
+        series = await load_series()
+        code = deep_code.lower()
+        if code in movies:
+            movie = movies[code]
+            ftype = movie.get("type", "video")
+            title = movie.get("title", "Kino")
+            caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
+            try:
+                if ftype == "document":
+                    await message.answer_document(movie["file_id"], caption=caption, protect_content=True)
+                else:
+                    await message.answer_video(movie["file_id"], caption=caption, protect_content=True)
+            except Exception:
+                await message.answer("❌ Kino yuborishda xato.")
+            await state.set_state(UserFSM.waiting_for_movie_code)
+            return
+        elif code in series:
+            await send_series_first(message, code, series[code])
+            await state.set_state(UserFSM.waiting_for_movie_code)
+            return
+        else:
+            await message.answer(f"❌ <b>'{deep_code}'</b> kodi topilmadi.")
+
+    await message.answer("🎬 <b>Kino/Serial botiga xush kelibsiz!</b>\n\n🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:")
+    await state.set_state(UserFSM.waiting_for_movie_code)
 
 # ============================================================
 # OBUNA TEKSHIRISH
@@ -384,8 +422,32 @@ async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
     _sub_cache.pop(callback.from_user.id, None)
     not_sub = await check_subscriptions(callback.from_user.id)
     if not not_sub:
-        await callback.message.edit_text("✅ <b>Obuna tasdiqlandi!</b>\n\n🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:")
-        await state.set_state(UserFSM.waiting_for_movie_code)
+        data = await state.get_data()
+        pending_code = data.get("pending_code")
+        if pending_code:
+            await state.update_data(pending_code=None)
+            movies = await load_data()
+            series = await load_series()
+            code = pending_code.lower()
+            await callback.message.edit_text("✅ <b>Obuna tasdiqlandi!</b>")
+            if code in movies:
+                movie = movies[code]
+                ftype = movie.get("type", "video")
+                title = movie.get("title", "Kino")
+                caption = f"🎬 <b>{title}</b>\n\nBoshqa kod yoki nom kiriting:"
+                try:
+                    if ftype == "document":
+                        await callback.message.answer_document(movie["file_id"], caption=caption, protect_content=True)
+                    else:
+                        await callback.message.answer_video(movie["file_id"], caption=caption, protect_content=True)
+                except Exception:
+                    await callback.message.answer("❌ Kino yuborishda xato.")
+            elif code in series:
+                await send_series_first(callback.message, code, series[code])
+            await state.set_state(UserFSM.waiting_for_movie_code)
+        else:
+            await callback.message.edit_text("✅ <b>Obuna tasdiqlandi!</b>\n\n🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:")
+            await state.set_state(UserFSM.waiting_for_movie_code)
     else:
         names = ", ".join([ch["name"] for ch in not_sub])
         await callback.answer(f"❌ Hali obuna bo'lmagansiz!\nQolganlar: {names}", show_alert=True)
