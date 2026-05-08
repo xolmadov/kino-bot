@@ -264,12 +264,13 @@ class UserFSM(StatesGroup):
 # KANAL TEKSHIRUVI — Kesh bilan (TTL 3 daqiqa)
 # ============================================================
 _sub_cache: dict = {}
-SUB_CACHE_TTL = 180
+SUB_CACHE_TTL = 30  # 30 soniya — tez yangilanadi
 
 async def check_subscriptions(user_id: int) -> list:
     channels = await load_channels()
     if not channels:
         return []
+    # Keshni tekshirish tugmasi bosilganda kesh o'chiriladi — shuning uchun doim yangi tekshiruv
     cached = _sub_cache.get(user_id)
     if cached and time.time() - cached["ts"] < SUB_CACHE_TTL:
         return cached["val"]
@@ -277,7 +278,7 @@ async def check_subscriptions(user_id: int) -> list:
     for ch in channels:
         try:
             member = await bot.get_chat_member(chat_id=ch["id"], user_id=user_id)
-            if member.status not in ("member", "administrator", "creator"):
+            if member.status in ("left", "kicked", "banned") or member.status not in ("member", "administrator", "creator"):
                 not_sub.append(ch)
         except Exception as e:
             print(f"[XATO] Kanal {ch['id']}: {e}")
@@ -889,13 +890,11 @@ async def statistika(message: Message):
     stats = await load_stats()
     channels = await load_channels()
     admins = await load_admins()
-    subscribers = await load_subscribers()
     await message.answer(
         f"📊 <b>Bot statistikasi:</b>\n\n"
         f"🎬 Kinolar: <b>{len(movies)}</b>\n"
         f"📺 Seriallar: <b>{len(series)}</b>\n"
         f"👤 Foydalanuvchilar: <b>{len(stats.get('users', []))}</b>\n"
-        f"💾 Obunachlar: <b>{len(subscribers)}</b>\n"
         f"📥 Jami so'rovlar: <b>{stats.get('requests', 0)}</b>\n"
         f"📢 Kanallar: <b>{len(channels)}/10</b>\n"
         f"🔧 Adminlar: <b>{len(admins)}</b> (+ 1 owner)"
@@ -1099,6 +1098,7 @@ async def send_series_first(message: Message, code: str, s: dict):
 @dp.message(UserFSM.waiting_for_movie_code, F.text)
 async def user_enter_code(message: Message, state: FSMContext):
     user_id = message.from_user.id
+    _sub_cache.pop(user_id, None)  # Har safar yangi tekshiruv
     not_sub = await check_subscriptions(user_id)
     if not_sub:
         await show_subscribe_message(message, not_sub)
