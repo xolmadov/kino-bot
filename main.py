@@ -965,8 +965,8 @@ async def admin_broadcast_start(message: Message, state: FSMContext):
         return
     subscribers = await load_subscribers()
     await message.answer(
-        f"📣 <b>Ommaviy xabar</b>\n💾 Obunachlar: <b>{len(subscribers)}</b>\n\n"
-        "Xabarni kiriting (/cancel — bekor qilish):",
+        f"📣 <b>Ommaviy xabar</b>\n👤 Foydalanuvchilar: <b>{len(subscribers)}</b>\n\n"
+        "Xabar yuboring — matn, rasm, video, fayl hammasi bo'ladi!\n(/cancel — bekor qilish)",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(AdminFSM.waiting_for_broadcast)
@@ -977,7 +977,7 @@ async def broadcast_cancel(message: Message, state: FSMContext):
     await message.answer("❌ Bekor qilindi.", reply_markup=get_admin_keyboard(uid))
     await state.set_state(AdminFSM.idle)
 
-@dp.message(AdminFSM.waiting_for_broadcast, F.text)
+@dp.message(AdminFSM.waiting_for_broadcast)
 async def broadcast_send(message: Message, state: FSMContext):
     subscribers = await load_subscribers()
     uid = message.from_user.id
@@ -989,7 +989,23 @@ async def broadcast_send(message: Message, state: FSMContext):
     status_msg = await message.answer(f"⏳ Yuborilmoqda... 0/{len(subscribers)}")
     for i, u in enumerate(subscribers):
         try:
-            await bot.send_message(u, f"📣 <b>Yangilik:</b>\n\n{message.text}")
+            # Xabar turini aniqlash va shundayligicha yuborish
+            if message.text:
+                await bot.send_message(u, message.text)
+            elif message.photo:
+                await bot.send_photo(u, message.photo[-1].file_id, caption=message.caption or "")
+            elif message.video:
+                await bot.send_video(u, message.video.file_id, caption=message.caption or "")
+            elif message.document:
+                await bot.send_document(u, message.document.file_id, caption=message.caption or "")
+            elif message.audio:
+                await bot.send_audio(u, message.audio.file_id, caption=message.caption or "")
+            elif message.voice:
+                await bot.send_voice(u, message.voice.file_id, caption=message.caption or "")
+            elif message.sticker:
+                await bot.send_sticker(u, message.sticker.file_id)
+            elif message.animation:
+                await bot.send_animation(u, message.animation.file_id, caption=message.caption or "")
             sent += 1
         except Exception:
             failed += 1
