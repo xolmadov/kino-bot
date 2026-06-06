@@ -274,6 +274,7 @@ _sub_cache: dict = {}
 SUB_CACHE_TTL = 30
 
 async def check_subscriptions(user_id: int) -> list:
+    """Faqat kanallarni tekshiradi. Botlar har doim ko'rsatiladi lekin to'smaydi."""
     channels = await load_channels()
     if not channels:
         return []
@@ -281,17 +282,24 @@ async def check_subscriptions(user_id: int) -> list:
     if cached and time.time() - cached["ts"] < SUB_CACHE_TTL:
         return cached["val"]
     not_sub = []
+    has_unsubbed_channel = False
     for ch in channels:
         if ch.get("type") == "bot":
-            not_sub.append(ch)
-            continue
+            continue  # Botlarni tekshirmaymiz
         try:
             member = await bot.get_chat_member(chat_id=ch["id"], user_id=user_id)
             if member.status not in ("member", "administrator", "creator"):
                 not_sub.append(ch)
+                has_unsubbed_channel = True
         except Exception as e:
             print(f"[XATO] Kanal {ch['id']}: {e}")
             not_sub.append(ch)
+            has_unsubbed_channel = True
+    # Agar obuna bo'lmagan kanal bo'lsa — botlarni ham qo'sh (birinchi kirish uchun)
+    if has_unsubbed_channel:
+        for ch in channels:
+            if ch.get("type") == "bot":
+                not_sub.insert(0, ch)
     _sub_cache[user_id] = {"val": not_sub, "ts": time.time()}
     return not_sub
 
@@ -504,8 +512,19 @@ async def send_episode(callback: types.CallbackQuery):
         ep_num = int(data[last_sep + 1:])
     except (ValueError, IndexError):
         return
-    not_sub = await check_subscriptions(callback.from_user.id)
-    if not_sub:
+    # Faqat kanallarni tekshirish (botlarni emas)
+    channels = await load_channels()
+    not_sub_ch = []
+    for ch in channels:
+        if ch.get("type") == "bot":
+            continue
+        try:
+            member = await bot.get_chat_member(chat_id=ch["id"], user_id=callback.from_user.id)
+            if member.status not in ("member", "administrator", "creator"):
+                not_sub_ch.append(ch)
+        except Exception:
+            not_sub_ch.append(ch)
+    if not_sub_ch:
         await callback.answer("❌ Avval kanallarga obuna bo'ling!", show_alert=True)
         return
     series = await load_series()
@@ -542,8 +561,19 @@ async def pick_content(callback: types.CallbackQuery):
     if len(parts) < 3:
         return
     kind, code = parts[1], parts[2]
-    not_sub = await check_subscriptions(callback.from_user.id)
-    if not_sub:
+    # Faqat kanallarni tekshirish (botlarni emas)
+    channels = await load_channels()
+    not_sub_ch = []
+    for ch in channels:
+        if ch.get("type") == "bot":
+            continue
+        try:
+            member = await bot.get_chat_member(chat_id=ch["id"], user_id=callback.from_user.id)
+            if member.status not in ("member", "administrator", "creator"):
+                not_sub_ch.append(ch)
+        except Exception:
+            not_sub_ch.append(ch)
+    if not_sub_ch:
         await callback.answer("❌ Avval kanallarga obuna bo'ling!", show_alert=True)
         return
     await callback.answer()
