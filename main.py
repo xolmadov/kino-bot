@@ -142,8 +142,13 @@ async def load_channels() -> list:
     saved = val if val else []
     all_ch = list(CHANNELS)
     for ch in saved:
-        if not any(c["id"] == ch["id"] for c in all_ch):
-            all_ch.append(ch)
+        # Bot uchun link bo'yicha, kanal uchun id bo'yicha tekshirish
+        if ch.get("type") == "bot":
+            if not any(c.get("link") == ch.get("link") for c in all_ch):
+                all_ch.append(ch)
+        else:
+            if not any(c["id"] == ch["id"] for c in all_ch):
+                all_ch.append(ch)
     _cache_set("channels", all_ch)
     return all_ch
 
@@ -293,16 +298,10 @@ async def check_subscriptions(user_id: int) -> list:
 async def show_subscribe_message(message: Message, not_sub: list):
     buttons = []
     for ch in not_sub:
-        icon = "🤖" if ch.get("type") == "bot" else "📢"
-        buttons.append([InlineKeyboardButton(text=f"{icon} {ch['name']}", url=ch["link"])])
+        buttons.append([InlineKeyboardButton(text=ch['name'], url=ch["link"])])
     buttons.append([InlineKeyboardButton(text="✅ Tekshirish", callback_data="check_sub")])
-    channels_text = "\n".join([
-        f"• {'🤖' if ch.get('type') == 'bot' else '📢'} <a href='{ch['link']}'>  {ch['name']}</a>"
-        for ch in not_sub
-    ])
     await message.answer(
-        "⚠️ <b>Kino/serial ko'rish uchun quyidagilarga obuna bo'ling:</b>\n\n"
-        f"{channels_text}",
+        "⚠️ <b>Kino/serial ko'rish uchun quyidagilarga obuna bo'ling:</b>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
         disable_web_page_preview=True
     )
