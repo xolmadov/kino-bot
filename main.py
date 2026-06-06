@@ -990,42 +990,52 @@ async def admin_channels_list(message: Message):
         await message.answer("📋 Kanal/Bot yo'q.\n⚠️ Hech narsa bo'lmasa, hamma ko'ra oladi.")
         return
     text = f"📋 <b>Kanallar va Botlar ({len(channels)}/10):</b>\n\n"
+    buttons = []
     for i, ch in enumerate(channels, 1):
         icon = "🤖" if ch.get("type") == "bot" else "📢"
         if ch.get("type") == "bot":
             text += f"{i}. {icon} <b>{ch['name']}</b>\n   🔗 {ch['link']}\n\n"
+            cb_data = f"delb_{i - 1}"  # index bo'yicha o'chirish
         else:
             text += f"{i}. {icon} <b>{ch['name']}</b> — <code>{ch['id']}</code>\n\n"
-    buttons = []
-    for ch in channels:
-        icon = "🤖" if ch.get("type") == "bot" else "📢"
-        # Bot uchun link bo'yicha o'chirish, kanal uchun id bo'yicha
-        cb_data = f"del_ch_bot_{ch['link'].replace('https://t.me/', '')}" if ch.get("type") == "bot" else f"del_ch_{ch['id']}"
+            cb_data = f"delc_{i - 1}"  # index bo'yicha o'chirish
         buttons.append([InlineKeyboardButton(text=f"🗑 {icon} {ch['name']}", callback_data=cb_data)])
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-@dp.callback_query(F.data.startswith("del_ch_bot_"))
+@dp.callback_query(F.data.startswith("delb_"))
 async def delete_bot_cb(callback: types.CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
-    bot_username = callback.data.replace("del_ch_bot_", "")
-    bot_link = f"https://t.me/{bot_username}"
+    try:
+        idx = int(callback.data.replace("delb_", ""))
+    except ValueError:
+        return
     channels = await load_channels()
-    await save_channels([ch for ch in channels if ch.get("link") != bot_link])
-    await callback.answer("✅ Bot o'chirildi!", show_alert=True)
+    if idx < 0 or idx >= len(channels):
+        await callback.answer("❌ Topilmadi!", show_alert=True)
+        return
+    name = channels[idx].get("name", "Bot")
+    channels.pop(idx)
+    await save_channels(channels)
+    await callback.answer(f"✅ {name} o'chirildi!", show_alert=True)
     await callback.message.delete()
 
-@dp.callback_query(F.data.startswith("del_ch_"))
+@dp.callback_query(F.data.startswith("delc_"))
 async def delete_channel_cb(callback: types.CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
-    # "del_ch_bot_" ni o'tkazib yuborish
-    if "del_ch_bot_" in callback.data:
+    try:
+        idx = int(callback.data.replace("delc_", ""))
+    except ValueError:
         return
-    ch_id = int(callback.data.replace("del_ch_", ""))
     channels = await load_channels()
-    await save_channels([ch for ch in channels if ch["id"] != ch_id])
-    await callback.answer("✅ Kanal o'chirildi!", show_alert=True)
+    if idx < 0 or idx >= len(channels):
+        await callback.answer("❌ Topilmadi!", show_alert=True)
+        return
+    name = channels[idx].get("name", "Kanal")
+    channels.pop(idx)
+    await save_channels(channels)
+    await callback.answer(f"✅ {name} o'chirildi!", show_alert=True)
     await callback.message.delete()
 
 # ============================================================
