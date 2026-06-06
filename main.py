@@ -49,7 +49,7 @@ CHANNELS = []
 EP_PER_PAGE = 10
 
 # ============================================================
-# GLOBAL HTTP CLIENT
+# GLOBAL HTTP CLIENT — bitta, minimal sozlamalar
 # ============================================================
 http_client = httpx.AsyncClient(
     timeout=7,
@@ -57,10 +57,10 @@ http_client = httpx.AsyncClient(
 )
 
 # ============================================================
-# KESH TIZIMI
+# KESH TIZIMI — Barcha ma'lumotlar RAM da saqlanadi
 # ============================================================
 _cache: dict = {}
-CACHE_TTL = 300
+CACHE_TTL = 300  # 5 daqiqa (avval 2 daqiqa edi — Supabase ga kamroq murojaat)
 
 def _cache_get(key: str):
     entry = _cache.get(key)
@@ -75,7 +75,7 @@ def _cache_del(key: str):
     _cache.pop(key, None)
 
 # ============================================================
-# SUPABASE
+# SUPABASE — Minimal HTTP so'rovlar
 # ============================================================
 async def sb_get(key: str):
     try:
@@ -106,7 +106,7 @@ async def sb_set(key: str, value):
         print(f"[sb_set xato] {key}: {e}")
 
 # ============================================================
-# MA'LUMOT YUKLASH / SAQLASH
+# MA'LUMOT YUKLASH / SAQLASH — Kesh bilan
 # ============================================================
 async def load_data() -> dict:
     cached = _cache_get("movies")
@@ -171,7 +171,7 @@ async def is_admin(user_id: int) -> bool:
     return str(user_id) in admins
 
 # ============================================================
-# FOYDALANUVCHI TRACKING
+# FOYDALANUVCHI TRACKING — Minimal Supabase yozuvi
 # ============================================================
 _known_users: set = set()
 
@@ -225,8 +225,7 @@ def get_admin_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="🎬 Kino qo'shish"), KeyboardButton(text="📺 Serial qo'shish")],
         [KeyboardButton(text="➕ Serialga qism qo'shish")],
         [KeyboardButton(text="📁 Barcha kinolar"), KeyboardButton(text="🗑 Kino o'chirish")],
-        [KeyboardButton(text="📢 Kanal qo'shish"), KeyboardButton(text="🤖 Bot qo'shish")],
-        [KeyboardButton(text="📋 Kanallar ro'yxati")],
+        [KeyboardButton(text="📢 Kanal qo'shish"), KeyboardButton(text="📋 Kanallar ro'yxati")],
         [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="📣 Xabar yuborish")],
     ]
     if user_id == OWNER_ID:
@@ -255,7 +254,6 @@ class AdminFSM(StatesGroup):
     waiting_for_add_ep_count = State()
     waiting_for_add_ep_file = State()
     waiting_for_channel = State()
-    waiting_for_bot = State()          # ✅ YANGI: Bot qo'shish uchun
     waiting_for_broadcast = State()
     waiting_for_new_admin_id = State()
 
@@ -263,24 +261,21 @@ class UserFSM(StatesGroup):
     waiting_for_movie_code = State()
 
 # ============================================================
-# KANAL TEKSHIRUVI — Botlar tekshiruvsiz ko'rsatiladi
+# KANAL TEKSHIRUVI — Kesh bilan (TTL 3 daqiqa)
 # ============================================================
 _sub_cache: dict = {}
-SUB_CACHE_TTL = 30
+SUB_CACHE_TTL = 30  # 30 soniya — tez yangilanadi
 
 async def check_subscriptions(user_id: int) -> list:
     channels = await load_channels()
     if not channels:
         return []
+    # Keshni tekshirish tugmasi bosilganda kesh o'chiriladi — shuning uchun doim yangi tekshiruv
     cached = _sub_cache.get(user_id)
     if cached and time.time() - cached["ts"] < SUB_CACHE_TTL:
         return cached["val"]
     not_sub = []
     for ch in channels:
-        # ✅ YANGI: Bot bo'lsa — tekshiruvsiz, doim ko'rsat
-        if ch.get("type") == "bot":
-            not_sub.append(ch)
-            continue
         try:
             member = await bot.get_chat_member(chat_id=ch["id"], user_id=user_id)
             if member.status in ("left", "kicked", "banned") or member.status not in ("member", "administrator", "creator"):
@@ -292,17 +287,11 @@ async def check_subscriptions(user_id: int) -> list:
     return not_sub
 
 async def show_subscribe_message(message: Message, not_sub: list):
-    buttons = []
-    for ch in not_sub:
-        icon = "🤖" if ch.get("type") == "bot" else "📢"
-        buttons.append([InlineKeyboardButton(text=f"{icon} {ch['name']}", url=ch["link"])])
+    buttons = [[InlineKeyboardButton(text=f"📢 {ch['name']}", url=ch["link"])] for ch in not_sub]
     buttons.append([InlineKeyboardButton(text="✅ Obuna bo'ldim, tekshirish", callback_data="check_sub")])
-    channels_text = "\n".join([
-        f"• {'🤖' if ch.get('type') == 'bot' else '📢'} <a href='{ch['link']}'>{ch['name']}</a>"
-        for ch in not_sub
-    ])
+    channels_text = "\n".join([f"• <a href='{ch['link']}'>{ch['name']}</a>" for ch in not_sub])
     await message.answer(
-        "⚠️ <b>Kino/serial ko'rish uchun quyidagilarga obuna bo'ling:</b>\n\n"
+        "⚠️ <b>Kino/serial ko'rish uchun kanallarga obuna bo'ling:</b>\n\n"
         f"{channels_text}\n\n"
         "Obuna bo'lgach, ✅ <b>Tekshirish</b> tugmasini bosing.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
@@ -357,17 +346,21 @@ async def search_content(query: str) -> list:
     return results
 
 # ============================================================
-# /start
+# /start — deep link ham ishlaydi: /start rezero4
 # ============================================================
 @dp.message(F.text.startswith("/start"))
 async def start_cmd(message: Message, state: FSMContext):
     user_id = message.from_user.id
 
+    # Deep link kodini olish: "/start rezero4" → "rezero4"
     parts = message.text.strip().split(maxsplit=1)
     deep_code = parts[1].strip() if len(parts) > 1 else None
 
     if await is_admin(user_id):
         cur = await state.get_state()
+        # state None bo'lsa — parol so'ra (bot restart bo'lgan)
+        # waiting_for_password bo'lsa — parol so'ra
+        # Boshqa state bo'lsa — allaqachon kirgan, menyu ko'rsat
         if cur is None or cur == str(AdminFSM.waiting_for_password):
             await message.answer("🔐 <b>Admin paneliga xush kelibsiz!</b>\n\nParolni kiriting:", reply_markup=ReplyKeyboardRemove())
             await state.set_state(AdminFSM.waiting_for_password)
@@ -380,11 +373,13 @@ async def start_cmd(message: Message, state: FSMContext):
     not_sub = await check_subscriptions(user_id)
 
     if not_sub:
+        # Obuna bo'lmagan — kodni saqlab qo'yamiz, obunadan keyin yuboramiz
         if deep_code:
             await state.update_data(pending_code=deep_code)
         await show_subscribe_message(message, not_sub)
         return
 
+    # Obuna bo'lgan — deep link kodi bormi?
     if deep_code:
         movies = await load_data()
         series = await load_series()
@@ -414,29 +409,13 @@ async def start_cmd(message: Message, state: FSMContext):
     await state.set_state(UserFSM.waiting_for_movie_code)
 
 # ============================================================
-# OBUNA TEKSHIRISH — Botlar uchun maxsus
+# OBUNA TEKSHIRISH
 # ============================================================
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
     _sub_cache.pop(callback.from_user.id, None)
-    channels = await load_channels()
-
-    # ✅ YANGI: Faqat kanallarni tekshirish (botlar har doim ko'rsatiladi, lekin tekshiruvsiz o'tkaziladi)
-    not_sub_channels = []
-    for ch in channels:
-        if ch.get("type") == "bot":
-            continue  # Botlarni tekshirmaymiz
-        try:
-            member = await bot.get_chat_member(chat_id=ch["id"], user_id=callback.from_user.id)
-            if member.status not in ("member", "administrator", "creator"):
-                not_sub_channels.append(ch)
-        except Exception as e:
-            print(f"[XATO] Kanal {ch['id']}: {e}")
-            not_sub_channels.append(ch)
-
-    if not not_sub_channels:
-        # Barcha kanallarga obuna bo'lgan — botlarni ham keshdan o'chiramiz
-        _sub_cache.pop(callback.from_user.id, None)
+    not_sub = await check_subscriptions(callback.from_user.id)
+    if not not_sub:
         data = await state.get_data()
         pending_code = data.get("pending_code")
         if pending_code:
@@ -464,7 +443,7 @@ async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
             await callback.message.edit_text("✅ <b>Obuna tasdiqlandi!</b>\n\n🔑 Kino yoki serial <b>kodi</b> yoki <b>nomini</b> kiriting:")
             await state.set_state(UserFSM.waiting_for_movie_code)
     else:
-        names = ", ".join([ch["name"] for ch in not_sub_channels])
+        names = ", ".join([ch["name"] for ch in not_sub])
         await callback.answer(f"❌ Hali obuna bo'lmagansiz!\nQolganlar: {names}", show_alert=True)
 
 # ============================================================
@@ -913,14 +892,14 @@ async def admin_save_channel(message: Message, state: FSMContext):
         return
     channels = await load_channels()
     if len(channels) >= 10:
-        await message.answer("❌ Maksimal 10 ta kanal/bot qo'shish mumkin!", reply_markup=get_admin_keyboard(uid))
+        await message.answer("❌ Maksimal 10 ta kanal qo'shish mumkin!", reply_markup=get_admin_keyboard(uid))
         await state.set_state(AdminFSM.idle)
         return
     if any(c["id"] == ch_id for c in channels):
         await message.answer("⚠️ Bu kanal allaqachon qo'shilgan!", reply_markup=get_admin_keyboard(uid))
         await state.set_state(AdminFSM.idle)
         return
-    channels.append({"id": ch_id, "link": ch_link, "name": ch_name, "type": "channel"})
+    channels.append({"id": ch_id, "link": ch_link, "name": ch_name})
     await save_channels(channels)
     await message.answer(
         f"✅ <b>Kanal qo'shildi!</b>\n\n📢 Nomi: <b>{ch_name}</b>\n🆔 ID: <code>{ch_id}</code>\n📋 Jami: {len(channels)}/10",
@@ -929,57 +908,7 @@ async def admin_save_channel(message: Message, state: FSMContext):
     await state.set_state(AdminFSM.idle)
 
 # ============================================================
-# ✅ YANGI — ADMIN: BOT QO'SHISH
-# ============================================================
-@dp.message(F.text == "🤖 Bot qo'shish")
-async def admin_add_bot(message: Message, state: FSMContext):
-    if not await is_admin(message.from_user.id):
-        return
-    await message.answer(
-        "🤖 <b>Bot ma'lumotlarini kiriting:</b>\n\n"
-        "Format:\n<code>https://t.me/botusername | Bot nomi</code>\n\n"
-        "Masalan:\n<code>https://t.me/ZenithSearchBot | Zenith Search Bot</code>",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    await state.set_state(AdminFSM.waiting_for_bot)
-
-@dp.message(AdminFSM.waiting_for_bot, F.text)
-async def admin_save_bot(message: Message, state: FSMContext):
-    uid = message.from_user.id
-    try:
-        parts = [p.strip() for p in message.text.split("|")]
-        if len(parts) != 2:
-            raise ValueError()
-        bot_link = parts[0]
-        bot_name = parts[1]
-        if not bot_link.startswith("https://t.me/"):
-            raise ValueError()
-    except Exception:
-        await message.answer(
-            "❌ Noto'g'ri format!\n\n"
-            "To'g'ri format:\n<code>https://t.me/botusername | Bot nomi</code>"
-        )
-        return
-    channels = await load_channels()
-    if len(channels) >= 10:
-        await message.answer("❌ Maksimal 10 ta kanal/bot qo'shish mumkin!", reply_markup=get_admin_keyboard(uid))
-        await state.set_state(AdminFSM.idle)
-        return
-    if any(c.get("link") == bot_link for c in channels):
-        await message.answer("⚠️ Bu bot allaqachon qo'shilgan!", reply_markup=get_admin_keyboard(uid))
-        await state.set_state(AdminFSM.idle)
-        return
-    # id=0 chunki bot uchun chat_id tekshiruvi yo'q
-    channels.append({"id": 0, "link": bot_link, "name": bot_name, "type": "bot"})
-    await save_channels(channels)
-    await message.answer(
-        f"✅ <b>Bot qo'shildi!</b>\n\n🤖 Nomi: <b>{bot_name}</b>\n🔗 Link: {bot_link}\n📋 Jami: {len(channels)}/10",
-        reply_markup=get_admin_keyboard(uid)
-    )
-    await state.set_state(AdminFSM.idle)
-
-# ============================================================
-# ADMIN — KANALLAR RO'YXATI (Bot ham ko'rinadi)
+# ADMIN — KANALLAR RO'YXATI
 # ============================================================
 @dp.message(F.text == "📋 Kanallar ro'yxati")
 async def admin_channels_list(message: Message):
@@ -987,55 +916,22 @@ async def admin_channels_list(message: Message):
         return
     channels = await load_channels()
     if not channels:
-        await message.answer("📋 Kanal/Bot yo'q.\n⚠️ Hech narsa bo'lmasa, hamma ko'ra oladi.")
+        await message.answer("📋 Kanal yo'q.\n⚠️ Kanal bo'lmasa, hamma ko'ra oladi.")
         return
-    text = f"📋 <b>Kanallar va Botlar ({len(channels)}/10):</b>\n\n"
-    buttons = []
+    text = f"📋 <b>Kanallar ({len(channels)}/10):</b>\n\n"
     for i, ch in enumerate(channels, 1):
-        icon = "🤖" if ch.get("type") == "bot" else "📢"
-        if ch.get("type") == "bot":
-            text += f"{i}. {icon} <b>{ch['name']}</b>\n   🔗 {ch['link']}\n\n"
-            cb_data = f"delb_{i - 1}"  # index bo'yicha o'chirish
-        else:
-            text += f"{i}. {icon} <b>{ch['name']}</b> — <code>{ch['id']}</code>\n\n"
-            cb_data = f"delc_{i - 1}"  # index bo'yicha o'chirish
-        buttons.append([InlineKeyboardButton(text=f"🗑 {icon} {ch['name']}", callback_data=cb_data)])
+        text += f"{i}. <b>{ch['name']}</b> — <code>{ch['id']}</code>\n"
+    buttons = [[InlineKeyboardButton(text=f"🗑 {ch['name']}", callback_data=f"del_ch_{ch['id']}")] for ch in channels]
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-@dp.callback_query(F.data.startswith("delb_"))
-async def delete_bot_cb(callback: types.CallbackQuery):
-    if not await is_admin(callback.from_user.id):
-        return
-    try:
-        idx = int(callback.data.replace("delb_", ""))
-    except ValueError:
-        return
-    channels = await load_channels()
-    if idx < 0 or idx >= len(channels):
-        await callback.answer("❌ Topilmadi!", show_alert=True)
-        return
-    name = channels[idx].get("name", "Bot")
-    channels.pop(idx)
-    await save_channels(channels)
-    await callback.answer(f"✅ {name} o'chirildi!", show_alert=True)
-    await callback.message.delete()
-
-@dp.callback_query(F.data.startswith("delc_"))
+@dp.callback_query(F.data.startswith("del_ch_"))
 async def delete_channel_cb(callback: types.CallbackQuery):
     if not await is_admin(callback.from_user.id):
         return
-    try:
-        idx = int(callback.data.replace("delc_", ""))
-    except ValueError:
-        return
+    ch_id = int(callback.data.replace("del_ch_", ""))
     channels = await load_channels()
-    if idx < 0 or idx >= len(channels):
-        await callback.answer("❌ Topilmadi!", show_alert=True)
-        return
-    name = channels[idx].get("name", "Kanal")
-    channels.pop(idx)
-    await save_channels(channels)
-    await callback.answer(f"✅ {name} o'chirildi!", show_alert=True)
+    await save_channels([ch for ch in channels if ch["id"] != ch_id])
+    await callback.answer("✅ Kanal o'chirildi!", show_alert=True)
     await callback.message.delete()
 
 # ============================================================
@@ -1050,15 +946,13 @@ async def statistika(message: Message):
     stats = await load_stats()
     channels = await load_channels()
     admins = await load_admins()
-    ch_count = sum(1 for c in channels if c.get("type") != "bot")
-    bot_count = sum(1 for c in channels if c.get("type") == "bot")
     await message.answer(
         f"📊 <b>Bot statistikasi:</b>\n\n"
         f"🎬 Kinolar: <b>{len(movies)}</b>\n"
         f"📺 Seriallar: <b>{len(series)}</b>\n"
         f"👤 Foydalanuvchilar: <b>{len(stats.get('users', []))}</b>\n"
         f"📥 Jami so'rovlar: <b>{stats.get('requests', 0)}</b>\n"
-        f"📢 Kanallar: <b>{ch_count}</b> | 🤖 Botlar: <b>{bot_count}</b>\n"
+        f"📢 Kanallar: <b>{len(channels)}/10</b>\n"
         f"🔧 Adminlar: <b>{len(admins)}</b> (+ 1 owner)"
     )
 
@@ -1095,6 +989,7 @@ async def broadcast_send(message: Message, state: FSMContext):
     status_msg = await message.answer(f"⏳ Yuborilmoqda... 0/{len(subscribers)}")
     for i, u in enumerate(subscribers):
         try:
+            # Xabar turini aniqlash va shundayligicha yuborish
             if message.text:
                 await bot.send_message(u, message.text)
             elif message.photo:
@@ -1275,7 +1170,7 @@ async def send_series_first(message: Message, code: str, s: dict):
 @dp.message(UserFSM.waiting_for_movie_code, F.text)
 async def user_enter_code(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    _sub_cache.pop(user_id, None)
+    _sub_cache.pop(user_id, None)  # Har safar yangi tekshiruv
     not_sub = await check_subscriptions(user_id)
     if not_sub:
         await show_subscribe_message(message, not_sub)
