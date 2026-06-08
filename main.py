@@ -1,5 +1,6 @@
 import asyncio
 import os
+import urllib.request
 import time
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -18,7 +19,30 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
 
+#
+
 # ============================================================
+# KEEP-ALIVE — Render uchun o'z-o'zini uyg'otish
+# ============================================================
+
+
+def keep_alive():
+    """Har 10 daqiqada o'zini ping qilib uyg'otadi"""
+    import time
+    url = os.getenv("RENDER_EXTERNAL_URL", "")
+    if not url:
+        print("[keep_alive] RENDER_EXTERNAL_URL yo'q, o'chirildi.")
+        return
+    while True:
+        try:
+            urllib.request.urlopen(url, timeout=5)
+            print(f"[keep_alive] ✅ Ping yuborildi: {url}")
+        except Exception as e:
+            print(f"[keep_alive] ⚠️ Xato: {e}")
+        time.sleep(600)  # 10 daqiqa
+
+threading.Thread(target=keep_alive, daemon=True).start()
+ ============================================================
 # RENDER UCHUN PORT SERVER
 # ============================================================
 class Handler(BaseHTTPRequestHandler):
