@@ -1,8 +1,8 @@
 import asyncio
 import os
-import urllib.request
 import time
 import threading
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 load_dotenv()
@@ -19,30 +19,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
 
-#
-
 # ============================================================
-# KEEP-ALIVE — Render uchun o'z-o'zini uyg'otish
-# ============================================================
-
-
-def keep_alive():
-    """Har 10 daqiqada o'zini ping qilib uyg'otadi"""
-    import time
-    url = os.getenv("RENDER_EXTERNAL_URL", "")
-    if not url:
-        print("[keep_alive] RENDER_EXTERNAL_URL yo'q, o'chirildi.")
-        return
-    while True:
-        try:
-            urllib.request.urlopen(url, timeout=5)
-            print(f"[keep_alive] ✅ Ping yuborildi: {url}")
-        except Exception as e:
-            print(f"[keep_alive] ⚠️ Xato: {e}")
-        time.sleep(600)  # 10 daqiqa
-
-threading.Thread(target=keep_alive, daemon=True).start()
- ============================================================
 # RENDER UCHUN PORT SERVER
 # ============================================================
 class Handler(BaseHTTPRequestHandler):
@@ -59,6 +36,25 @@ def run_http_server():
     server.serve_forever()
 
 threading.Thread(target=run_http_server, daemon=True).start()
+
+# ============================================================
+# KEEP-ALIVE — Render uchun o'z-o'zini uyg'otish
+# ============================================================
+def keep_alive():
+    """Har 10 daqiqada o'zini ping qilib uyg'otadi — Render sleep bo'lmaydi"""
+    url = os.getenv("RENDER_EXTERNAL_URL", "")
+    if not url:
+        print("[keep_alive] RENDER_EXTERNAL_URL sozlanmagan, o'tkazib yuborildi.")
+        return
+    while True:
+        time.sleep(600)  # 10 daqiqa kutadi
+        try:
+            urllib.request.urlopen(url, timeout=10)
+            print(f"[keep_alive] ✅ Ping yuborildi: {url}")
+        except Exception as e:
+            print(f"[keep_alive] ⚠️ Ping xatosi: {e}")
+
+threading.Thread(target=keep_alive, daemon=True).start()
 
 # ============================================================
 # SOZLAMALAR
@@ -166,7 +162,6 @@ async def load_channels() -> list:
     saved = val if val else []
     all_ch = list(CHANNELS)
     for ch in saved:
-        # Bot uchun link bo'yicha, kanal uchun id bo'yicha tekshirish
         if ch.get("type") == "bot":
             if not any(c.get("link") == ch.get("link") for c in all_ch):
                 all_ch.append(ch)
@@ -284,7 +279,7 @@ class AdminFSM(StatesGroup):
     waiting_for_add_ep_count = State()
     waiting_for_add_ep_file = State()
     waiting_for_channel = State()
-    waiting_for_bot = State()          # ✅ YANGI: Bot qo'shish uchun
+    waiting_for_bot = State()
     waiting_for_broadcast = State()
     waiting_for_new_admin_id = State()
 
@@ -292,13 +287,12 @@ class UserFSM(StatesGroup):
     waiting_for_movie_code = State()
 
 # ============================================================
-# KANAL TEKSHIRUVI — Botlar tekshiruvsiz ko'rsatiladi
+# KANAL TEKSHIRUVI
 # ============================================================
 _sub_cache: dict = {}
 SUB_CACHE_TTL = 30
 
 async def check_subscriptions(user_id: int) -> list:
-    """Faqat kanallarni tekshiradi. Botlar har doim ko'rsatiladi lekin to'smaydi."""
     channels = await load_channels()
     if not channels:
         return []
@@ -309,7 +303,7 @@ async def check_subscriptions(user_id: int) -> list:
     has_unsubbed_channel = False
     for ch in channels:
         if ch.get("type") == "bot":
-            continue  # Botlarni tekshirmaymiz
+            continue
         try:
             member = await bot.get_chat_member(chat_id=ch["id"], user_id=user_id)
             if member.status not in ("member", "administrator", "creator"):
@@ -319,7 +313,6 @@ async def check_subscriptions(user_id: int) -> list:
             print(f"[XATO] Kanal {ch['id']}: {e}")
             not_sub.append(ch)
             has_unsubbed_channel = True
-    # Agar obuna bo'lmagan kanal bo'lsa — botlarni ham qo'sh (birinchi kirish uchun)
     if has_unsubbed_channel:
         for ch in channels:
             if ch.get("type") == "bot":
@@ -443,18 +436,17 @@ async def start_cmd(message: Message, state: FSMContext):
     await state.set_state(UserFSM.waiting_for_movie_code)
 
 # ============================================================
-# OBUNA TEKSHIRISH — Botlar uchun maxsus
+# OBUNA TEKSHIRISH
 # ============================================================
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
     _sub_cache.pop(callback.from_user.id, None)
     channels = await load_channels()
 
-    # ✅ YANGI: Faqat kanallarni tekshirish (botlar har doim ko'rsatiladi, lekin tekshiruvsiz o'tkaziladi)
     not_sub_channels = []
     for ch in channels:
         if ch.get("type") == "bot":
-            continue  # Botlarni tekshirmaymiz
+            continue
         try:
             member = await bot.get_chat_member(chat_id=ch["id"], user_id=callback.from_user.id)
             if member.status not in ("member", "administrator", "creator"):
@@ -464,7 +456,6 @@ async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
             not_sub_channels.append(ch)
 
     if not not_sub_channels:
-        # Barcha kanallarga obuna bo'lgan — botlarni ham keshdan o'chiramiz
         _sub_cache.pop(callback.from_user.id, None)
         data = await state.get_data()
         pending_code = data.get("pending_code")
@@ -536,7 +527,6 @@ async def send_episode(callback: types.CallbackQuery):
         ep_num = int(data[last_sep + 1:])
     except (ValueError, IndexError):
         return
-    # Faqat kanallarni tekshirish (botlarni emas)
     channels = await load_channels()
     not_sub_ch = []
     for ch in channels:
@@ -585,7 +575,6 @@ async def pick_content(callback: types.CallbackQuery):
     if len(parts) < 3:
         return
     kind, code = parts[1], parts[2]
-    # Faqat kanallarni tekshirish (botlarni emas)
     channels = await load_channels()
     not_sub_ch = []
     for ch in channels:
@@ -980,7 +969,7 @@ async def admin_save_channel(message: Message, state: FSMContext):
     await state.set_state(AdminFSM.idle)
 
 # ============================================================
-# ✅ YANGI — ADMIN: BOT QO'SHISH
+# ADMIN — BOT QO'SHISH
 # ============================================================
 @dp.message(F.text == "🤖 Bot qo'shish")
 async def admin_add_bot(message: Message, state: FSMContext):
@@ -1020,7 +1009,6 @@ async def admin_save_bot(message: Message, state: FSMContext):
         await message.answer("⚠️ Bu bot allaqachon qo'shilgan!", reply_markup=get_admin_keyboard(uid))
         await state.set_state(AdminFSM.idle)
         return
-    # id=0 chunki bot uchun chat_id tekshiruvi yo'q
     channels.append({"id": 0, "link": bot_link, "name": bot_name, "type": "bot"})
     await save_channels(channels)
     await message.answer(
@@ -1030,7 +1018,7 @@ async def admin_save_bot(message: Message, state: FSMContext):
     await state.set_state(AdminFSM.idle)
 
 # ============================================================
-# ADMIN — KANALLAR RO'YXATI (Bot ham ko'rinadi)
+# ADMIN — KANALLAR RO'YXATI
 # ============================================================
 @dp.message(F.text == "📋 Kanallar ro'yxati")
 async def admin_channels_list(message: Message):
@@ -1046,10 +1034,10 @@ async def admin_channels_list(message: Message):
         icon = "🤖" if ch.get("type") == "bot" else "📢"
         if ch.get("type") == "bot":
             text += f"{i}. {icon} <b>{ch['name']}</b>\n   🔗 {ch['link']}\n\n"
-            cb_data = f"delb_{i - 1}"  # index bo'yicha o'chirish
+            cb_data = f"delb_{i - 1}"
         else:
             text += f"{i}. {icon} <b>{ch['name']}</b> — <code>{ch['id']}</code>\n\n"
-            cb_data = f"delc_{i - 1}"  # index bo'yicha o'chirish
+            cb_data = f"delc_{i - 1}"
         buttons.append([InlineKeyboardButton(text=f"🗑 {icon} {ch['name']}", callback_data=cb_data)])
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
@@ -1406,13 +1394,15 @@ async def handle_text(message: Message, state: FSMContext):
 # ============================================================
 async def main():
     print("=" * 40)
-    print("🚀 Bot ishga tushdi! (Optimized)")
+    print("🚀 Bot ishga tushdi! (Optimized + Keep-Alive)")
     print(f"👑 Owner ID: {OWNER_ID}")
     movies = await load_data()
     series = await load_series()
     subscribers = await load_subscribers()
     print(f"🎬 Kinolar: {len(movies)} ta | 📺 Seriallar: {len(series)} ta")
     print(f"💾 Obunachlar: {len(subscribers)} ta")
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "Sozlanmagan")
+    print(f"🔗 Keep-Alive URL: {render_url}")
     print("=" * 40)
     await bot.delete_webhook(drop_pending_updates=True)
     try:
