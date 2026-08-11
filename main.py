@@ -350,11 +350,11 @@ def build_episode_keyboard(code: str, total: int, page: int, active: int = 0) ->
         buttons.append(row)
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"eppage_{code}_{page - 1}"))
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"eppage_{code}_{page - 1}_{active}"))
     if total_pages > 1:
         nav.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"eppage_{code}_{page + 1}"))
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"eppage_{code}_{page + 1}_{active}"))
     if nav:
         buttons.append(nav)
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -494,9 +494,9 @@ async def check_sub_cb(callback: types.CallbackQuery, state: FSMContext):
 async def episode_page_cb(callback: types.CallbackQuery):
     data = callback.data[len("eppage_"):]
     try:
-        last_sep = data.rfind("_")
-        code = data[:last_sep]
-        page = int(data[last_sep + 1:])
+        code, page_str, active_str = data.rsplit("_", 2)
+        page = int(page_str)
+        active = int(active_str)
     except (ValueError, IndexError):
         return
     series = await load_series()
@@ -504,7 +504,7 @@ async def episode_page_cb(callback: types.CallbackQuery):
         await callback.answer("❌ Serial topilmadi!", show_alert=True)
         return
     total = len(series[code].get("episodes", []))
-    kb = build_episode_keyboard(code, total, page)
+    kb = build_episode_keyboard(code, total, page, active=active)
     try:
         await callback.message.edit_reply_markup(reply_markup=kb)
     except Exception:
@@ -557,14 +557,29 @@ async def send_episode(callback: types.CallbackQuery):
     kb = build_episode_keyboard(code, total, page, active=ep_num)
     caption = f"<b>{s['title']}</b>\n<b>{ep_num}-qism</b>"
     await callback.answer()
+
+    if ep["type"] == "document":
+        media = types.InputMediaDocument(media=ep["file_id"], caption=caption, parse_mode=ParseMode.HTML)
+    else:
+        media = types.InputMediaVideo(media=ep["file_id"], caption=caption, parse_mode=ParseMode.HTML)
+
     try:
-        if ep["type"] == "document":
-            await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
-        else:
-            await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
+        # Yangi xabar yubormasdan, mavjudini tahrirlaymiz: shunda chatda faqat
+        # 1 ta video qoladi va 📀 belgisi doim faqat hozirgi qismda ko'rinadi
+        await callback.message.edit_media(media=media, reply_markup=kb)
     except Exception as e:
-        print(f"[XATO] Qism: {e}")
-        await callback.message.answer("❌ Qismni yuborishda xato.")
+        if "not modified" in str(e).lower():
+            pass
+        else:
+            print(f"[XATO] Qism edit: {e}")
+            try:
+                if ep["type"] == "document":
+                    await callback.message.answer_document(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
+                else:
+                    await callback.message.answer_video(ep["file_id"], caption=caption, protect_content=True, reply_markup=kb)
+            except Exception as e2:
+                print(f"[XATO] Qism: {e2}")
+                await callback.message.answer("❌ Qismni yuborishda xato.")
 
 # ============================================================
 # QIDIRUV NATIJASINI TANLASH
@@ -1297,7 +1312,7 @@ async def send_series_first(message: Message, code: str, s: dict):
         await message.answer("❌ Serial qismlari topilmadi.")
         return
     ep = episodes[0]
-    kb = build_episode_keyboard(code, total, 0)
+    kb = build_episode_keyboard(code, total, 0, active=1)
     caption = f"<b>{title}</b>\n<b>1-qism</b>"
     try:
         if ep["type"] == "document":
